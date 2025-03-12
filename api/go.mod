@@ -1,4 +1,4 @@
-module github.tools.sap/CoLa/quota-operator/api
+module github.com/openmcp-project/quota-operator/api
 
 go 1.22.0
 

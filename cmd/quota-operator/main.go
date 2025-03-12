@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.tools.sap/CoLa/quota-operator/cmd/quota-operator/app"
+	"github.com/openmcp-project/quota-operator/cmd/quota-operator/app"
 )
 
 func main() {

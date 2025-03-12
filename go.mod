@@ -1,18 +1,18 @@
-module github.tools.sap/CoLa/quota-operator
+module github.com/openmcp-project/quota-operator
 
 go 1.23.0
 
 toolchain go1.23.7
 
-replace github.tools.sap/CoLa/quota-operator/api => ./api
+replace github.com/openmcp-project/quota-operator/api => ./api
 
 require (
 	github.com/onsi/ginkgo/v2 v2.22.2
 	github.com/onsi/gomega v1.36.2
 	github.com/openmcp-project/controller-utils v0.4.2
+	github.com/openmcp-project/quota-operator/api v0.3.1
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/pflag v1.0.6
-	github.tools.sap/CoLa/quota-operator/api v0.3.1
 	k8s.io/api v0.32.2
 	k8s.io/apiextensions-apiserver v0.32.2
 	k8s.io/apimachinery v0.32.2

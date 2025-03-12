@@ -23,8 +23,8 @@ import (
 	colactrlutil "github.com/openmcp-project/controller-utils/pkg/controller"
 	"github.com/openmcp-project/controller-utils/pkg/logging"
 
-	openmcpv1alpha1 "github.tools.sap/CoLa/quota-operator/api/v1alpha1"
-	"github.tools.sap/CoLa/quota-operator/pkg/controller/quota/config"
+	openmcpv1alpha1 "github.com/openmcp-project/quota-operator/api/v1alpha1"
+	"github.com/openmcp-project/quota-operator/pkg/controller/quota/config"
 )
 
 const ControllerName = "quota-controller"

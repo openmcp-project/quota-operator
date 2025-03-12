@@ -5,7 +5,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
-	"github.tools.sap/CoLa/quota-operator/api/v1alpha1"
+	"github.com/openmcp-project/quota-operator/api/v1alpha1"
 )
 
 // Install installs all APIs in the scheme.

@@ -9,7 +9,7 @@ import (
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.tools.sap/CoLa/quota-operator/pkg/controller/quota/config"
+	"github.com/openmcp-project/quota-operator/pkg/controller/quota/config"
 )
 
 // rawOptions contains the options specified directly via the command line.

@@ -19,10 +19,10 @@ import (
 	openmcpctrlutil "github.com/openmcp-project/controller-utils/pkg/controller"
 	testutils "github.com/openmcp-project/controller-utils/pkg/testing"
 
-	quotainstall "github.tools.sap/CoLa/quota-operator/api/install"
-	quotav1alpha1 "github.tools.sap/CoLa/quota-operator/api/v1alpha1"
-	quotacontroller "github.tools.sap/CoLa/quota-operator/pkg/controller/quota"
-	"github.tools.sap/CoLa/quota-operator/pkg/controller/quota/config"
+	quotainstall "github.com/openmcp-project/quota-operator/api/install"
+	quotav1alpha1 "github.com/openmcp-project/quota-operator/api/v1alpha1"
+	quotacontroller "github.com/openmcp-project/quota-operator/pkg/controller/quota"
+	"github.com/openmcp-project/quota-operator/pkg/controller/quota/config"
 )
 
 func TestConfig(t *testing.T) {

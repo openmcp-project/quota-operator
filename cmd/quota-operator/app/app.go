@@ -20,9 +20,9 @@ import (
 	ctrlcfg "sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	crdinstall "github.tools.sap/CoLa/quota-operator/api/crds"
-	quotainstall "github.tools.sap/CoLa/quota-operator/api/install"
-	quotacontroller "github.tools.sap/CoLa/quota-operator/pkg/controller/quota"
+	crdinstall "github.com/openmcp-project/quota-operator/api/crds"
+	quotainstall "github.com/openmcp-project/quota-operator/api/install"
+	quotacontroller "github.com/openmcp-project/quota-operator/pkg/controller/quota"
 )
 
 func NewQuotaOperatorCommand(ctx context.Context) *cobra.Command {

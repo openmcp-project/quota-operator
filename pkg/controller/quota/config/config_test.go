@@ -12,7 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
-	"github.tools.sap/CoLa/quota-operator/pkg/controller/quota/config"
+	"github.com/openmcp-project/quota-operator/pkg/controller/quota/config"
 )
 
 func TestConfig(t *testing.T) {

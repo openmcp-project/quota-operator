@@ -4,6 +4,6 @@ description: A Helm chart for the quota-operator
 type: application
 version: v0.3.1
 appVersion: v0.3.1
-home: https://github.tools.sap/CoLa/quota-operator
+home: https://github.com/openmcp-project/quota-operator
 sources:
-  - https://github.tools.sap/CoLa/quota-operator
+  - https://github.com/openmcp-project/quota-operator
