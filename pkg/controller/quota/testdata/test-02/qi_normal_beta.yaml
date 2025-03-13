@@ -1,0 +1,8 @@
+apiVersion: openmcp.cloud/v1alpha1
+kind: QuotaIncrease
+metadata:
+  name: qi-normal-beta
+  namespace: ns-normal
+spec:
+  hard:
+    count/secrets: 10

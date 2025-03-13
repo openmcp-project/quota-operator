@@ -1,0 +1,28 @@
+quotas:
+- name: "project"
+  selector:
+    matchExpressions:
+    - key: "openmcp.cloud/project"
+      operator: Exists
+    - key: "openmcp.cloud/workspace"
+      operator: DoesNotExist
+  template:
+    annotations:
+      foo.bar.baz/foobar: asdf
+    spec:
+      hard:
+        count/secrets: 3
+- name: "workspace"
+  mode: whatever
+  selector:
+    matchExpressions:
+    - key: "openmcp.cloud/project"
+      operator: Exists
+    - key: "openmcp.cloud/workspace"
+      operator: Exists
+  template:
+    labels:
+      foo.bar.baz/foobar: asdf
+    spec:
+      hard:
+        count/configmaps: 3

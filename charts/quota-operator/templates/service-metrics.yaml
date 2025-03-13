@@ -1,0 +1,17 @@
+{{- if .Values.metrics.service.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "quota-operator.fullname" . }}-metrics
+  labels:
+    {{- include "quota-operator.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.metrics.service.type }}
+  ports:
+    - port: {{ .Values.metrics.service.port }}
+      targetPort: metrics-http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "quota-operator.selectorLabels" . | nindent 4 }}
+{{- end -}}

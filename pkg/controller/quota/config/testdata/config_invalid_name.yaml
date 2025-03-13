@@ -1,0 +1,52 @@
+quotas:
+- mode: cumulative
+  selector:
+    matchExpressions:
+    - key: "openmcp.cloud/project"
+      operator: Exists
+    - key: "openmcp.cloud/workspace"
+      operator: DoesNotExist
+  template:
+    annotations:
+      foo.bar.baz/foobar: asdf
+    spec:
+      hard:
+        count/secrets: 3
+- name: ""
+  mode: maximum
+  selector:
+    matchExpressions:
+    - key: "openmcp.cloud/project"
+      operator: Exists
+    - key: "openmcp.cloud/workspace"
+      operator: Exists
+  template:
+    labels:
+      foo.bar.baz/foobar: asdf
+    spec:
+      hard:
+        count/configmaps: 3
+- name: "ASDF"
+  mode: singular
+  template:
+    spec:
+      hard:
+        count/serviceaccounts: 3
+- name: "extreeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeemely-long-name"
+  mode: singular
+  template:
+    spec:
+      hard:
+        count/serviceaccounts: 3
+- name: "twice"
+  mode: singular
+  template:
+    spec:
+      hard:
+        count/serviceaccounts: 3
+- name: "twice"
+  mode: singular
+  template:
+    spec:
+      hard:
+        count/serviceaccounts: 3

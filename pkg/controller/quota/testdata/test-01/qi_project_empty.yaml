@@ -1,0 +1,7 @@
+apiVersion: openmcp.cloud/v1alpha1
+kind: QuotaIncrease
+metadata:
+  name: qi-project-empty
+  namespace: ns-project
+spec:
+  hard: {}
