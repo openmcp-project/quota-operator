@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "quota-operator.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "quota-operator.labels" . | nindent 4 }}
+data:
+  {{- if kindIs "string" .Values.config }}
+  config.yaml: |
+    {{ .Values.config | nindent 4 }}
+  {{- else }}
+  config.yaml: |
+    {{- .Values.config | toYaml | nindent 4 }}
+  {{- end }}

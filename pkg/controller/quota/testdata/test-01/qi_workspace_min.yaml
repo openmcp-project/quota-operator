@@ -1,0 +1,8 @@
+apiVersion: openmcp.cloud/v1alpha1
+kind: QuotaIncrease
+metadata:
+  name: qi-workspace-min
+  namespace: ns-workspace
+spec:
+  hard:
+    count/configmaps: 1

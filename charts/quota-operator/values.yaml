@@ -1,0 +1,79 @@
+image:
+  repository: deploy-releases-hyperspace-docker.common.repositories.cloud.sap/openmcp/quota-operator
+  tag: v0.3.1
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+  # - name: pull-secret
+
+cluster:
+  # # specify either kubeconfig or host, audience, and one of caData or caConfigMapName.
+  # kubeconfig: |
+  #   apiVersion: v1
+  #   clusters:
+  #   - cluster: ...
+  # host: https://api.mycluster.com
+  # audience: ...
+  # caData: ...
+  # caConfigMapName: ...
+
+# crds:
+#   disabled: false # set to true to disable CRD deployment
+
+config: # put a valid config here
+  # quotas:
+  # - name: "project"
+  #   mode: cumulative
+  #   deleteIneffectiveQuotas: true
+  #   selector:
+  #     matchLabels:
+  #       foo.bar.baz/foobar: asdf
+  #   template:
+  #     annotations:
+  #       foo.bar.baz/foobar: asdf
+  #     spec:
+  #       hard:
+  #         count/secrets: 3
+  # - name: "workspace"
+  #   mode: maximum
+  #   selector:
+  #     matchExpressions:
+  #     - key: "openmcp.cloud/project"
+  #       operator: Exists
+  #     - key: "openmcp.cloud/workspace"
+  #       operator: Exists
+  #   template:
+  #     labels:
+  #       foo.bar.baz/foobar: asdf
+  #     spec:
+  #       hard:
+  #         count/configmaps: 3
+  # - name: "all"
+  #   mode: singular
+  #   template:
+  #     spec:
+  #       hard:
+  #         count/serviceaccounts: 3
+  # externalQuotaDefinitionNames:
+  # - foo
+  # - bar
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+#   limits:
+#     cpu: 500m
+#     memory: 2Gi
+
+# logging:
+#   verbosity: info # error, info, or debug
+
+metrics:
+  listen:
+    port: 8080
+  service:
+    enabled: false
+    port: 8080
+    type: ClusterIP
+    annotations: {}

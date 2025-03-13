@@ -1,0 +1,101 @@
+apiVersion: {{ include "deploymentversion" . }}
+kind: Deployment
+metadata:
+  name: {{ include "quota-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: openmcp-onboarding
+    role: quota-operator
+    chart-name: "{{ .Chart.Name }}"
+    chart-version: "{{ .Chart.Version }}"
+    release: "{{ .Release.Name }}"
+    heritage: "{{ .Release.Service }}"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "quota-operator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-config.yaml") . | sha256sum }}
+        checksum/common-clusters: {{ include (print $.Template.BasePath "/secret-cluster.yaml") . | sha256sum }}
+      labels:
+        {{- include "quota-operator.labels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "quota-operator.fullname" . }}
+      containers:
+      - name: quota-operator
+        image: "{{ include "image" .Values.image }}"
+        imagePullPolicy: "{{.Values.image.pullPolicy}}"
+        command:
+        - /quota-operator
+        {{- if and .Values.crds .Values.crds.disabled }}
+        - --no-crds
+        {{- end }}
+        - --config=/etc/config/config.yaml
+        {{- if .Values.cluster }}
+        - --kubeconfig=/etc/cluster
+        {{- end }}
+        {{- if and .Values.logging .Values.logging.verbosity }}
+        - -v={{ .Values.logging.verbosity }}
+        {{- end }}
+        - --metrics-bind-address=:{{ .Values.metrics.listen.port }}
+        volumeMounts:
+        - name: config
+          mountPath: /etc/config
+          readOnly: true
+        - name: cluster
+          mountPath: /etc/cluster
+          readOnly: true
+        resources:
+          requests:
+            cpu: {{ .Values.resources.requests.cpu | default "100m" }}
+            memory: {{ .Values.resources.requests.memory | default "256Mi" }}
+          {{- if .Values.resources.limits }}
+          limits:
+          {{- .Values.resources.limits | toYaml | nindent 12 }}
+          {{- end }}
+      volumes:
+      - name: config
+        projected:
+          sources:
+          - configMap:
+              name: {{ include "quota-operator.fullname" . }}-config
+      - name: cluster
+        projected:
+          sources:
+          {{- if .Values.cluster }}
+          {{- if .Values.cluster.kubeconfig }}
+          - secret:
+              name: {{ include "quota-operator.fullname" . }}-cluster
+              items:
+              - key: kubeconfig
+                path: kubeconfig
+          {{- else }}
+          - secret:
+              name: {{ include "quota-operator.fullname" . }}-cluster
+              items:
+              - key: host
+                path: host
+              {{- if .Values.cluster.caData }}
+              - key: caData
+                path: ca.crt
+              {{- end }}
+          - serviceAccountToken:
+              path: token
+              expirationSeconds: 7200
+              audience: {{ .Values.cluster.audience }}
+          {{- if .Values.cluster.caConfigMapName }}
+          - configMap:
+              name: {{ .Values.cluster.caConfigMapName }}
+              items:
+              - key: ca.crt
+                path: ca.crt
+          {{- end }}
+          {{- end }}
+          {{- end }}

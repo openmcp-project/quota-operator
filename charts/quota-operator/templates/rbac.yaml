@@ -1,0 +1,54 @@
+{{- if not .Values.cluster }}
+apiVersion: {{ include "rbacversion" . }}
+kind: ClusterRole
+metadata:
+  name: {{ include "quota-operator.clusterrole" . }}
+  labels:
+    {{- include "quota-operator.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+- apiGroups:
+  - openmcp.cloud
+  resources:
+  - quotaincreases
+  verbs:
+  - "*"
+- apiGroups:
+  - ""
+  resources:
+  - resourcequotas
+  verbs:
+  - "*"
+{{- if not (and .Values.crds .Values.crds.disabled) }}
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - '*'
+{{- end }}
+---
+kind: ClusterRoleBinding
+apiVersion: {{ include "rbacversion" . }}
+metadata:
+  name: {{ include "quota-operator.clusterrole" . }}
+  labels:
+    {{- include "quota-operator.labels" . | nindent 4 }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "quota-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ include "quota-operator.clusterrole" . }}
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

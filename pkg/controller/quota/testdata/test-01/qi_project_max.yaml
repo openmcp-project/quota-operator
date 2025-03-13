@@ -1,0 +1,9 @@
+apiVersion: openmcp.cloud/v1alpha1
+kind: QuotaIncrease
+metadata:
+  name: qi-project-max
+  namespace: ns-project
+spec:
+  hard:
+    count/secrets: 30
+    count/configmaps: 10

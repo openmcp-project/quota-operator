@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    openmcp.cloud/project: my-project
+    openmcp.cloud/workspace: my-workspace
+  name: ns-workspace
