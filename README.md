@@ -1,11 +1,9 @@
 [![REUSE status](https://api.reuse.software/badge/github.com/openmcp-project/quota-operator)](https://api.reuse.software/info/github.com/openmcp-project/quota-operator)
-
 # quota-operator
 
 ## About this project
 
 A Kubernetes Operator for managing resource quota in namespaces.
-
 
 ## What it does
 

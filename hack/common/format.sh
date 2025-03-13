@@ -9,7 +9,7 @@ if [[ ${1:-} == "--verify" ]]; then
   shift
 fi
 
-# MODULE_NAME must be set to the name of the local go module, e.g. 'github.tools.sap/CoLa/mcp-operator'
+# MODULE_NAME must be set to the name of the local go module.
 tmp=$("${FORMATTER}" -l $write_mode -local=$MODULE_NAME $("$COMMON_SCRIPT_DIR/unfold.sh" --clean --no-unfold "$@"))
 
 if [[ -z ${write_mode} ]] && [[ ${tmp} ]]; then

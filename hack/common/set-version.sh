@@ -25,7 +25,7 @@ for comp in ${COMPONENTS//,/ }; do
   done
 done
 
-# MODULE_NAME must be set to the local go module name, e.g. 'github.tools.sap/CoLa/mcp-operator'
+# MODULE_NAME must be set to the local go module name.
 # NESTED_MODULES must be set to the list of nested go modules, e.g. 'api,nested2,nested3'
 for nm in ${NESTED_MODULES//,/ }; do
   # update go.mod

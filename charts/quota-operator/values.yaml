@@ -1,5 +1,5 @@
 image:
-  repository: deploy-releases-hyperspace-docker.common.repositories.cloud.sap/openmcp/quota-operator
+  repository: ghcr.io/openmcp-project/github.com/openmcp-project/quota-operator/images/quota-operator
   tag: v0.3.1
   pullPolicy: IfNotPresent
 
