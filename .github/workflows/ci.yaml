@@ -15,19 +15,27 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          submodules: recursive
+
 
       - name: Set up Go
         uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b # v5
         with:
           go-version-file: go.mod
 
-      - name: make tidy
-        run: |
-          make tidy
-          git diff --exit-code
-          
-      - name: make verify
-        run: make verify
+      - name: Install Task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
 
-      - name: make test
-        run: make test
+      - name: make generate
+        run: |
+          task generate
+          git diff --exit-code
+
+      - name: task validate
+        run: task validate
+
+      - name: task test
+        run: task test
