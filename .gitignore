@@ -36,3 +36,6 @@ components/
 # add later again
 blueprints/
 components/
+
+api/cover.root.html
+cover.root.html
