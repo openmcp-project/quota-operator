@@ -10,5 +10,16 @@
   ],
   "postUpdateOptions": [
     "gomodTidy"
+  ],
+  "packageRules": [
+    {
+      "matchPackageNames": [
+        "github.com/gardener/openmcp-project/*"
+      ],
+      "description": "Update all components from openmcp-project immediately",
+      "rebaseWhen": "auto",
+      "minimumReleaseAge": "0 days",
+      "enabled": true
+    }
   ]
 }
