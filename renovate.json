@@ -14,7 +14,7 @@
   "packageRules": [
     {
       "matchPackageNames": [
-        "github.com/gardener/openmcp-project/*"
+        "github.com/openmcp-project/*"
       ],
       "description": "Update all components from openmcp-project immediately",
       "rebaseWhen": "auto",
