@@ -16,6 +16,18 @@
   ],
   "packageRules": [
     {
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchDepNames": [
+        "go"
+      ],
+      "matchDepTypes": [
+        "golang"
+      ],
+      "rangeStrategy": "bump"
+    },
+    {
       "matchPackageNames": [
         "github.com/openmcp-project/*"
       ],
@@ -23,6 +35,12 @@
       "rebaseWhen": "auto",
       "minimumReleaseAge": "0 days",
       "enabled": true
+    },
+    {
+      "description": "Ignore our own image in chart as it will be updated on release",
+      "matchPackageNames": ["ghcr.io/openmcp-project/images/quota-operator"],
+      "matchManagers": ["helm-values"],
+      "enabled": false
     }
   ]
 }
