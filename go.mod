@@ -6,7 +6,7 @@ replace github.com/openmcp-project/quota-operator/api => ./api
 
 require (
 	github.com/onsi/ginkgo/v2 v2.23.4
-	github.com/onsi/gomega v1.37.0
+	github.com/onsi/gomega v1.38.0
 	github.com/openmcp-project/controller-utils v0.11.0
 	github.com/openmcp-project/quota-operator/api v0.8.0
 	github.com/spf13/cobra v1.9.1
