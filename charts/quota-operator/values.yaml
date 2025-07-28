@@ -1,6 +1,6 @@
 image:
   repository: ghcr.io/openmcp-project/images/quota-operator
-  tag: v0.8.0
+  tag: v0.9.0
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
