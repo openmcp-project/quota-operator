@@ -10,7 +10,7 @@ require (
 	github.com/openmcp-project/controller-utils v0.16.0
 	github.com/openmcp-project/quota-operator/api v0.10.0
 	github.com/spf13/cobra v1.10.1
-	github.com/spf13/pflag v1.0.9
+	github.com/spf13/pflag v1.0.10
 	k8s.io/api v0.34.0
 	k8s.io/apiextensions-apiserver v0.34.0
 	k8s.io/apimachinery v0.34.0
