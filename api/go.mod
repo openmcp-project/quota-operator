@@ -1,6 +1,6 @@
 module github.com/openmcp-project/quota-operator/api
 
-go 1.25.3
+go 1.25.4
 
 require (
 	k8s.io/api v0.34.1
