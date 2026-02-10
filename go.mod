@@ -1,6 +1,6 @@
 module github.com/openmcp-project/quota-operator
 
-go 1.25.6
+go 1.26.0
 
 replace github.com/openmcp-project/quota-operator/api => ./api
 
