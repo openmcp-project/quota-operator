@@ -19,7 +19,7 @@ func CRDs() []*apiextv1.CustomResourceDefinition {
 	if err != nil {
 		panic(err)
 	}
-	res := []*apiextv1.CustomResourceDefinition{}
+	res := make([]*apiextv1.CustomResourceDefinition, 0, len(files))
 	for _, f := range files {
 		data, err := CRDFS.ReadFile(filepath.Join("manifests", f.Name()))
 		if err != nil {
