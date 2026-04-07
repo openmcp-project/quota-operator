@@ -12,6 +12,7 @@ import (
 // QuotaServiceConfig is the Schema for the QuotaServiceConfig API
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster,shortName=qcfg
+// +kubebuilder:metadata:labels="openmcp.cloud/cluster=platform"
 type QuotaServiceConfig struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

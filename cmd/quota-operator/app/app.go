@@ -1,123 +1,80 @@
 package app
 
 import (
-	"context"
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/utils/ptr"
-
-	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
-	// to ensure that exec-entrypoint and run can make use of them.
-	_ "k8s.io/client-go/plugin/pkg/client/auth"
-
-	"github.com/openmcp-project/controller-utils/pkg/logging"
-	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	ctrlcfg "sigs.k8s.io/controller-runtime/pkg/config"
-	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	crdinstall "github.com/openmcp-project/quota-operator/api/crds"
-	quotainstall "github.com/openmcp-project/quota-operator/api/install"
+	"github.com/spf13/cobra"
+
+	"github.com/openmcp-project/controller-utils/pkg/clusters"
+	"github.com/openmcp-project/controller-utils/pkg/logging"
 )
 
-func NewQuotaOperatorCommand(ctx context.Context) *cobra.Command {
-	options := NewOptions()
-
+func NewPlatformServiceQuotaCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "quota",
-		Short: "quota manages ResourceQuota and QuotaIncrease objects in namespaces.",
-
-		Run: func(cmd *cobra.Command, args []string) {
-			if err := options.Complete(); err != nil {
-				fmt.Print(err)
-				os.Exit(1)
-			}
-			ctx = logging.NewContext(ctx, options.Log)
-			if err := options.run(ctx); err != nil {
-				options.Log.Error(err, "unable to run quota operator")
-				os.Exit(1)
-			}
-		},
+		Use:   "platform-service-quota",
+		Short: "platform-service-quota manages resource quotas",
 	}
+	cmd.SetOut(os.Stdout)
+	cmd.SetErr(os.Stderr)
 
-	options.AddFlags(cmd.Flags())
+	so := &SharedOptions{
+		RawSharedOptions: &RawSharedOptions{},
+		PlatformCluster:  clusters.New("platform"),
+	}
+	so.AddPersistentFlags(cmd)
+	cmd.AddCommand(NewInitCommand(so))
+	cmd.AddCommand(NewRunCommand(so))
 
 	return cmd
 }
 
-func (o *Options) run(ctx context.Context) error {
-	log := o.Log
-	// ctx = logging.NewContext(ctx, log)
-	setupLog := log.WithName("setup")
+type RawSharedOptions struct {
+	Environment  string `json:"environment"`
+	ProviderName string `json:"provider-name"`
+	DryRun       bool   `json:"dry-run"`
+}
 
-	if o.DryRun {
-		setupLog.Info("Exiting now because this is a dry run")
-		return nil
+type SharedOptions struct {
+	*RawSharedOptions
+	PlatformCluster *clusters.Cluster
+
+	// fields filled in Complete()
+	Log logging.Logger
+}
+
+func (o *SharedOptions) AddPersistentFlags(cmd *cobra.Command) {
+	// logging
+	logging.InitFlags(cmd.PersistentFlags())
+	// clusters
+	o.PlatformCluster.RegisterSingleConfigPathFlag(cmd.PersistentFlags())
+	// environment
+	cmd.PersistentFlags().StringVar(&o.Environment, "environment", "", "Environment name. Required. This is used to distinguish between different environments that are watching the same Onboarding cluster. Must be globally unique.")
+	// provider name
+	cmd.PersistentFlags().StringVar(&o.ProviderName, "provider-name", "", "Name of the provider resource.")
+	cmd.PersistentFlags().BoolVar(&o.DryRun, "dry-run", false, "If set, the command aborts after evaluation of the given flags.")
+}
+
+func (o *SharedOptions) Complete() error {
+	if o.Environment == "" {
+		return fmt.Errorf("environment must not be empty")
+	}
+	if o.ProviderName == "" {
+		return fmt.Errorf("provider-name must not be empty")
 	}
 
-	setupLog.Info("Starting controllers")
-	sc := runtime.NewScheme()
-	quotainstall.InstallOperatorAPIsOnboarding(sc)
-	mgr, err := ctrl.NewManager(o.ClusterConfig, ctrl.Options{
-		Scheme: sc,
-		Metrics: server.Options{
-			BindAddress: o.MetricsAddr,
-		},
-		Controller: ctrlcfg.Controller{
-			RecoverPanic: ptr.To(true),
-		},
-		HealthProbeBindAddress: o.ProbeAddr,
-		LeaderElection:         o.EnableLeaderElection,
-		LeaderElectionID:       "quota.openmcp.cloud",
-		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
-		// when the Manager ends. This requires the binary to immediately end when the
-		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
-		// speeds up voluntary leader transitions as the new leader don't have to wait
-		// LeaseDuration time first.
-		//
-		// In the default scaffold provided, the program ends immediately after
-		// the manager stops, so would be fine to enable this option. However,
-		// if you are doing or is intended to do any operation such as perform cleanups
-		// after the manager stops then its usage might be unsafe.
-		LeaderElectionReleaseOnCancel: true,
-	})
+	// build logger
+	log, err := logging.GetLogger()
 	if err != nil {
-		return fmt.Errorf("unable to start manager: %w", err)
+		return err
 	}
+	o.Log = log
+	ctrl.SetLogger(o.Log.Logr())
 
-	// install CRDs if configured
-	if !o.NoCRDs {
-		setupScheme := runtime.NewScheme()
-		quotainstall.InstallOperatorAPIsOnboarding(setupScheme)
-		if err := apiextv1.AddToScheme(setupScheme); err != nil { // required for CRD installation
-			panic(err)
-		}
-		setupClient, err := client.New(o.ClusterConfig, client.Options{Scheme: setupScheme})
-		if err != nil {
-			return fmt.Errorf("error building setup client: %w", err)
-		}
-		setupLog.Info("CRD installation configured, deploying CRDs ...")
-		crds := crdinstall.CRDs()
-		for _, crd := range crds {
-			setupLog.Info("Deploying CRD", "name", crd.Name)
-			desired := crd.DeepCopy()
-			if _, err := ctrl.CreateOrUpdate(ctx, setupClient, crd, func() error {
-				crd.Spec = desired.Spec
-				return nil
-			}); err != nil {
-				return fmt.Errorf("error trying to apply CRD '%s' into cluster: %w", crd.Name, err)
-			}
-		}
-	}
-
-	setupLog.Info("Starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
-		setupLog.Error(err, "problem running manager")
-		os.Exit(1)
+	if err := o.PlatformCluster.InitializeRESTConfig(); err != nil {
+		return err
 	}
 
 	return nil
