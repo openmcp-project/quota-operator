@@ -8,8 +8,6 @@ import (
 	flag "github.com/spf13/pflag"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
-
-	"github.com/openmcp-project/quota-operator/pkg/controller/quota/config"
 )
 
 // rawOptions contains the options specified directly via the command line.
@@ -38,7 +36,6 @@ type Options struct {
 
 	// completed options from raw options
 	ClusterConfig *rest.Config
-	Config        *config.QuotaControllerConfig
 }
 
 func NewOptions() *Options {
@@ -86,19 +83,6 @@ func (o *Options) Complete() error {
 	o.ClusterConfig, err = openmcpctrlutil.LoadKubeconfig(o.ClusterPath)
 	if err != nil {
 		return fmt.Errorf("unable to load laas cluster kubeconfig: %w", err)
-	}
-
-	// load dataplane provider config
-	if o.ConfigPath == "" {
-		return fmt.Errorf("no (or empty) path to QuotaController config file given, please specify --config argument")
-	}
-	o.Config, err = config.LoadConfig(o.ConfigPath)
-	if err != nil {
-		return err
-	}
-	err = config.Validate(o.Config)
-	if err != nil {
-		return fmt.Errorf("invalid config: %w", err)
 	}
 
 	// print options

@@ -44,12 +44,6 @@ func (o *Options) String(includeHeader bool, includeRawOptions bool) (string, er
 		opts["clusterHost"] = o.ClusterConfig.Host
 	}
 
-	// config
-	opts["config"] = nil
-	if o.Config != nil {
-		opts["config"] = o.Config
-	}
-
 	// convert to yaml
 	optsString, err := yaml.Marshal(opts)
 	if err != nil {

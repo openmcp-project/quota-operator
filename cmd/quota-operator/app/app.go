@@ -22,7 +22,6 @@ import (
 
 	crdinstall "github.com/openmcp-project/quota-operator/api/crds"
 	quotainstall "github.com/openmcp-project/quota-operator/api/install"
-	quotacontroller "github.com/openmcp-project/quota-operator/pkg/controller/quota"
 )
 
 func NewQuotaOperatorCommand(ctx context.Context) *cobra.Command {
@@ -59,14 +58,10 @@ func (o *Options) run(ctx context.Context) error {
 		setupLog.Info("Exiting now because this is a dry run")
 		return nil
 	}
-	if len(o.Config.Quotas) == 0 {
-		setupLog.Info("No quota definitions specified in config, nothing to do")
-		return nil
-	}
 
 	setupLog.Info("Starting controllers")
 	sc := runtime.NewScheme()
-	quotainstall.Install(sc)
+	quotainstall.InstallOperatorAPIsOnboarding(sc)
 	mgr, err := ctrl.NewManager(o.ClusterConfig, ctrl.Options{
 		Scheme: sc,
 		Metrics: server.Options{
@@ -97,7 +92,7 @@ func (o *Options) run(ctx context.Context) error {
 	// install CRDs if configured
 	if !o.NoCRDs {
 		setupScheme := runtime.NewScheme()
-		quotainstall.Install(setupScheme)
+		quotainstall.InstallOperatorAPIsOnboarding(setupScheme)
 		if err := apiextv1.AddToScheme(setupScheme); err != nil { // required for CRD installation
 			panic(err)
 		}
@@ -116,16 +111,6 @@ func (o *Options) run(ctx context.Context) error {
 			}); err != nil {
 				return fmt.Errorf("error trying to apply CRD '%s' into cluster: %w", crd.Name, err)
 			}
-		}
-	}
-
-	// create set of active quota definitions
-	activeQuotaDefinitions := o.Config.GetActiveQuotaDefinitions()
-
-	// create controllers
-	for _, qd := range o.Config.Quotas {
-		if err := quotacontroller.NewQuotaController(mgr.GetClient(), qd, activeQuotaDefinitions).SetupWithManager(mgr); err != nil {
-			return fmt.Errorf("error adding controller for quota definition '%s' to manager: %w", qd.Name, err)
 		}
 	}
 

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
+	"sync"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -20,22 +22,23 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	colactrlutil "github.com/openmcp-project/controller-utils/pkg/controller"
+	ctrlutils "github.com/openmcp-project/controller-utils/pkg/controller"
 	"github.com/openmcp-project/controller-utils/pkg/logging"
+	openapiconst "github.com/openmcp-project/openmcp-operator/api/constants"
 
-	openmcpv1alpha1 "github.com/openmcp-project/quota-operator/api/v1alpha1"
-	"github.com/openmcp-project/quota-operator/pkg/controller/quota/config"
+	quotav1alpha1 "github.com/openmcp-project/quota-operator/api/v1alpha1"
 )
 
-const ControllerName = "quota-controller"
+const ControllerName = "quota"
 
 // NewQuotaController creates a new QuotaController instance.
 // The activeQuotaDefinitions set should contain the names of all QuotaDefinitions from all QuotaControllers running in the same cluster.
-func NewQuotaController(c client.Client, cfg *config.QuotaDefinition, activeQuotaDefinitions sets.Set[string]) *QuotaController {
+func NewQuotaController(platformCluster, onboardingCluster client.Client, providerName string) *QuotaController {
 	return &QuotaController{
-		Client:                 c,
-		Config:                 cfg,
-		ActiveQuotaDefinitions: activeQuotaDefinitions,
+		PlatformCluster:   platformCluster,
+		OnboardingCluster: onboardingCluster,
+		ProviderName:      providerName,
+		cfgLock:           &sync.RWMutex{},
 	}
 }
 
@@ -43,21 +46,45 @@ func NewQuotaController(c client.Client, cfg *config.QuotaDefinition, activeQuot
 // - ResourceQuotas with an OwnerReference pointing to the namespace
 // - QuotaIncreases in the namespace
 type QuotaController struct {
-	Client                 client.Client
-	Config                 *config.QuotaDefinition
-	ActiveQuotaDefinitions sets.Set[string]
+	PlatformCluster   client.Client
+	OnboardingCluster client.Client
+	ProviderName      string
+	Config            *quotav1alpha1.QuotaServiceConfig
+	cfgLock           *sync.RWMutex
 }
 
 // Reconcile contains the main logic of creating and updating a ResourceQuota based on the QuotaIncreases in the reconciled Namespace.
 // The Namespace is registered as controller of the ResourceQuota and reacts on changes to QuotaIncreases within the namespace (even without owner reference), so this gets triggered if either is modified.
 func (r *QuotaController) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	log := logging.FromContextOrPanic(ctx).WithName(ControllerName).WithName(r.Config.Name).WithValues("quotaDefinition", r.Config.Name)
+	log := logging.FromContextOrPanic(ctx).WithName(ControllerName)
 	ctx = logging.NewContext(ctx, log)
 	log.Debug("Reconcile triggered")
 
+	// fetch and update internal config
+	cfg := &quotav1alpha1.QuotaServiceConfig{}
+	if err := r.PlatformCluster.Get(ctx, types.NamespacedName{Name: r.ProviderName}, cfg); err != nil {
+		return ctrl.Result{}, fmt.Errorf("unable to fetch QuotaServiceConfig '%s': %w", r.ProviderName, err)
+	}
+	if err := cfg.Spec.Validate(); err != nil {
+		return ctrl.Result{}, fmt.Errorf("invalid QuotaServiceConfig '%s': %w", r.ProviderName, err)
+	}
+	// if the config has a different generation than the known one, which indicates a spec change, update the internal config
+	r.cfgLock.RLock()
+	knownGeneration := int64(-1)
+	if r.Config != nil {
+		knownGeneration = r.Config.Generation
+	}
+	r.cfgLock.RUnlock()
+	if cfg.Generation != knownGeneration {
+		log.Info("Detected change in QuotaServiceConfig, updating internal config", "oldGeneration", knownGeneration, "newGeneration", cfg.Generation)
+		r.cfgLock.Lock()
+		r.Config = cfg
+		r.cfgLock.Unlock()
+	}
+
 	// fetch Namespace
 	ns := &corev1.Namespace{}
-	if err := r.Client.Get(ctx, req.NamespacedName, ns); err != nil {
+	if err := r.OnboardingCluster.Get(ctx, req.NamespacedName, ns); err != nil {
 		if apierrors.IsNotFound(err) {
 			log.Debug("Namespace not found")
 			return ctrl.Result{}, nil
@@ -65,15 +92,33 @@ func (r *QuotaController) Reconcile(ctx context.Context, req reconcile.Request) 
 		return ctrl.Result{}, fmt.Errorf("unable to fetch Namespace: %w", err)
 	}
 
-	if r.Config.Selector != nil {
-		sel, err := metav1.LabelSelectorAsSelector(r.Config.Selector)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("error converting label selector: %w", err)
+	// identify responsible quota definition
+	var qdef *quotav1alpha1.QuotaDefinition
+	r.cfgLock.RLock()
+	for _, qd := range r.Config.Spec.Quotas {
+		if qd.Selector == nil {
+			qdef = qd.DeepCopy()
+			break
+		} else {
+			sel, err := metav1.LabelSelectorAsSelector(qd.Selector)
+			if err != nil {
+				r.cfgLock.RUnlock()
+				return ctrl.Result{}, fmt.Errorf("error converting label selector for quota definition '%s': %w", qd.Name, err)
+			}
+			if sel.Matches(labels.Set(ns.Labels)) {
+				qdef = qd.DeepCopy()
+				break
+			}
 		}
-		if !sel.Matches(labels.Set(ns.Labels)) {
-			log.Debug("Skipping reconciliation because namespace labels do not match the configured selector")
-			return ctrl.Result{}, nil
-		}
+	}
+	r.cfgLock.RUnlock()
+	if qdef == nil {
+		log.Debug("No matching quota definition found for namespace, skipping reconciliation")
+		return ctrl.Result{}, nil
+	} else {
+		log = log.WithName(qdef.Name).WithValues("quotaDefinition", qdef.Name)
+		ctx = logging.NewContext(ctx, log)
+		log.Debug("Found matching quota definition for namespace")
 	}
 
 	if !ns.DeletionTimestamp.IsZero() {
@@ -83,46 +128,45 @@ func (r *QuotaController) Reconcile(ctx context.Context, req reconcile.Request) 
 
 	log.Info("Starting actual reconciliation logic")
 
-	baseQuota, ok := colactrlutil.GetLabel(ns, openmcpv1alpha1.BaseQuotaLabel)
-	if !ok {
-		log.Debug("Adding base quota label to namespace", "label", openmcpv1alpha1.BaseQuotaLabel, "value", r.Config.Name)
-		if err := colactrlutil.EnsureLabel(ctx, r.Client, ns, openmcpv1alpha1.BaseQuotaLabel, r.Config.Name, true); err != nil {
-			return ctrl.Result{}, fmt.Errorf("error adding base quota label to namespace: %w", err)
-		}
-	} else if baseQuota != r.Config.Name {
-		// check if this is an old label
-		if r.ActiveQuotaDefinitions.Has(baseQuota) {
-			// some other instance of QuotaController is already managing this namespace
-			log.Info("Another quota definition is already used to manage this namespace, skipping it", "label", openmcpv1alpha1.BaseQuotaLabel, "conflictingQuotaDefinition", baseQuota)
-			return ctrl.Result{}, nil
-		}
-		// namespace has the wrong base quota label, but no QuotaController instance is known with this base quota definition
-		// => label probably outdated, overwrite it
-		log.Info("Overwriting unknown base quota label on namespace", "label", openmcpv1alpha1.BaseQuotaLabel, "oldValue", baseQuota, "newValue", r.Config.Name)
-		if err := colactrlutil.EnsureLabel(ctx, r.Client, ns, openmcpv1alpha1.BaseQuotaLabel, r.Config.Name, true, colactrlutil.OVERWRITE); err != nil {
-			return ctrl.Result{}, fmt.Errorf("error overwriting base quota label on namespace: %w", err)
-		}
+	// evaluate quota-managed-by label on namespace
+	quotaManagedBy, ok := ctrlutils.GetLabel(ns, quotav1alpha1.ManagedByLabel)
+	if ok && quotaManagedBy != ControllerName {
+		log.Info("Namespace is managed by another instance of this platform service, skipping reconciliation", "providerName", quotaManagedBy)
+		return ctrl.Result{}, nil
 	}
 
-	// add operation mode label to namespace, if it doesn't exist yet
-	if err := colactrlutil.EnsureLabel(ctx, r.Client, ns, openmcpv1alpha1.QuotaIncreaseOperationModeLabel, string(r.Config.Mode), true, colactrlutil.OVERWRITE); err != nil {
-		return ctrl.Result{}, fmt.Errorf("error adding operation mode label to namespace: %w", err)
+	// ensure labels on namespace
+	old := ns.DeepCopy()
+	if err := ctrlutils.EnsureLabel(ctx, nil, ns, quotav1alpha1.ManagedByLabel, r.ProviderName, false); err != nil {
+		return ctrl.Result{}, fmt.Errorf("unable to set managed-by label '%s' to value '%s' on namespace: %w", quotav1alpha1.ManagedByLabel, r.ProviderName, err)
+	}
+	if err := ctrlutils.EnsureLabel(ctx, nil, ns, quotav1alpha1.BaseQuotaLabel, qdef.Name, false, ctrlutils.OVERWRITE); err != nil {
+		return ctrl.Result{}, fmt.Errorf("unable to set base quota label '%s' to value '%s' on namespace: %w", quotav1alpha1.BaseQuotaLabel, qdef.Name, err)
+	}
+	if err := ctrlutils.EnsureLabel(ctx, nil, ns, quotav1alpha1.QuotaIncreaseOperationModeLabel, string(qdef.Mode), false, ctrlutils.OVERWRITE); err != nil {
+		return ctrl.Result{}, fmt.Errorf("unable to set operation mode label '%s' to value '%s' on namespace: %w", quotav1alpha1.QuotaIncreaseOperationModeLabel, qdef.Mode, err)
+	}
+	if !maps.Equal(old.Labels, ns.Labels) {
+		if err := r.OnboardingCluster.Patch(ctx, ns, client.MergeFrom(old)); err != nil {
+			return ctrl.Result{}, fmt.Errorf("error patching labels on namespace: %w", err)
+		}
+		log.Info("Updated labels on namespace", "oldLabels", old.Labels, "newLabels", ns.Labels)
 	}
 
 	// list all QuotaIncreases in namespace
-	qis := &openmcpv1alpha1.QuotaIncreaseList{}
-	if err := r.Client.List(ctx, qis, client.InNamespace(ns.Name)); err != nil {
+	qis := &quotav1alpha1.QuotaIncreaseList{}
+	if err := r.OnboardingCluster.List(ctx, qis, client.InNamespace(ns.Name)); err != nil {
 		return ctrl.Result{}, fmt.Errorf("error listing QuotaIncreases: %w", err)
 	}
 
 	// create/update ResourceQuota
-	_, effects, err := r.createOrUpdateResourceQuota(ctx, ns, qis)
+	_, effects, err := r.createOrUpdateResourceQuota(ctx, ns, qdef, qis)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("error creating/updating ResourceQuota: %w", err)
 	}
 
 	// ensure QuotaIncrease integrity
-	if err := r.evaluateEffectiveness(ctx, ns, qis, effects); err != nil {
+	if err := r.evaluateEffectiveness(ctx, ns, qdef, qis, effects); err != nil {
 		return ctrl.Result{}, fmt.Errorf("error evaluating QuotaIncrease effectiveness: %w", err)
 	}
 
@@ -131,49 +175,62 @@ func (r *QuotaController) Reconcile(ctx context.Context, req reconcile.Request) 
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *QuotaController) SetupWithManager(mgr ctrl.Manager) error {
-	b := ctrl.NewControllerManagedBy(mgr)
-	if r.Config.Selector == nil {
-		b.For(&corev1.Namespace{})
-	} else {
-		selectorPredicate, err := predicate.LabelSelectorPredicate(*r.Config.Selector)
-		if err != nil {
-			return fmt.Errorf("error constructing predicate from label selector: %w", err)
-		}
-		b.For(&corev1.Namespace{}, builder.WithPredicates(selectorPredicate))
-	}
-	rqLabelSelectorPredicate, err := predicate.LabelSelectorPredicate(metav1.LabelSelector{
-		MatchLabels: map[string]string{
-			openmcpv1alpha1.ManagedByLabel:       ControllerName,
-			openmcpv1alpha1.QuotaDefinitionLabel: r.Config.Name,
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("error constructing predicate from static label selector: %w", err)
-	}
-	return b.
-		Owns(&corev1.ResourceQuota{}, builder.WithPredicates(predicate.And(predicate.GenerationChangedPredicate{}, rqLabelSelectorPredicate))).
-		Watches(&openmcpv1alpha1.QuotaIncrease{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&corev1.Namespace{}, builder.WithPredicates(
+			// Only reconcile namespaces that
+			// 1. do not have the openmcp or quota 'ignore' annotation
+			// 2. either have no managed-by label from the quota controller at all or have one whose value matches the provider name of this controller
+			predicate.And(
+				predicate.Not(
+					predicate.Or(
+						ctrlutils.HasAnnotationPredicate(openapiconst.OperationAnnotation, openapiconst.OperationAnnotationValueIgnore),
+						ctrlutils.HasAnnotationPredicate(quotav1alpha1.QuotaOperationLabel, openapiconst.OperationAnnotationValueIgnore),
+					),
+				),
+				predicate.Not(
+					predicate.And(
+						ctrlutils.HasLabelPredicate(quotav1alpha1.ManagedByLabel, ""),
+						predicate.Not(
+							ctrlutils.HasLabelPredicate(quotav1alpha1.ManagedByLabel, r.ProviderName),
+						),
+					),
+				),
+			),
+		)).
+		Owns(&corev1.ResourceQuota{}, builder.WithPredicates(
+			predicate.And(
+				predicate.GenerationChangedPredicate{},
+				predicate.Not(
+					predicate.And(
+						ctrlutils.HasLabelPredicate(quotav1alpha1.ManagedByLabel, ""),
+						predicate.Not(
+							ctrlutils.HasLabelPredicate(quotav1alpha1.ManagedByLabel, r.ProviderName),
+						),
+					),
+				),
+			),
+		)).
+		Watches(&quotav1alpha1.QuotaIncrease{}, handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
 			return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: o.GetNamespace()}}}
 		}), builder.WithPredicates(predicate.GenerationChangedPredicate{})).
-		Named(r.Config.Name).
 		Complete(r)
 }
 
-func (r *QuotaController) createOrUpdateResourceQuota(ctx context.Context, namespace *corev1.Namespace, qis *openmcpv1alpha1.QuotaIncreaseList) (*corev1.ResourceQuota, map[string]corev1.ResourceList, error) {
+func (r *QuotaController) createOrUpdateResourceQuota(ctx context.Context, namespace *corev1.Namespace, qdef *quotav1alpha1.QuotaDefinition, qis *quotav1alpha1.QuotaIncreaseList) (*corev1.ResourceQuota, map[string]corev1.ResourceList, error) {
 	log := logging.FromContextOrPanic(ctx)
 
-	computedRq, effects := r.computeResourceQuota(ctx, namespace, qis)
+	computedRq, effects := r.computeResourceQuota(ctx, namespace, qdef, qis)
 
 	rq := &corev1.ResourceQuota{}
 	rq.SetName(computedRq.Name)
 	rq.SetNamespace(computedRq.Namespace)
 	log.Info("Creating/Updating ResourceQuota", "resourceQuota", rq.Name)
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, rq, func() error {
+	_, err := controllerutil.CreateOrUpdate(ctx, r.OnboardingCluster, rq, func() error {
 		rq.Annotations = computedRq.Annotations
 		rq.Labels = computedRq.Labels
 		rq.Spec = computedRq.Spec
 
-		return controllerutil.SetControllerReference(namespace, rq, r.Client.Scheme())
+		return controllerutil.SetControllerReference(namespace, rq, r.OnboardingCluster.Scheme())
 	})
 	if err != nil {
 		return nil, nil, err
@@ -182,24 +239,24 @@ func (r *QuotaController) createOrUpdateResourceQuota(ctx context.Context, names
 }
 
 // computeResourceQuota takes the base ResourceQuota from the config and returns it with the quotas adapted based on the QuotaIncreases in the namespace, respecting the configured mode.
-func (r *QuotaController) computeResourceQuota(ctx context.Context, namespace *corev1.Namespace, qis *openmcpv1alpha1.QuotaIncreaseList) (*corev1.ResourceQuota, map[string]corev1.ResourceList) {
+func (r *QuotaController) computeResourceQuota(ctx context.Context, namespace *corev1.Namespace, qdef *quotav1alpha1.QuotaDefinition, qis *quotav1alpha1.QuotaIncreaseList) (*corev1.ResourceQuota, map[string]corev1.ResourceList) {
 	log := logging.FromContextOrPanic(ctx)
 
-	rq := r.Config.BaseResourceQuota()
+	rq := qdef.BaseResourceQuota()
 	rq.SetNamespace(namespace.Name)
 	if rq.Labels == nil {
 		rq.Labels = map[string]string{}
 	}
-	rq.Labels[openmcpv1alpha1.ManagedByLabel] = ControllerName
-	rq.Labels[openmcpv1alpha1.QuotaDefinitionLabel] = r.Config.Name
+	rq.Labels[quotav1alpha1.ManagedByLabel] = ControllerName
+	rq.Labels[quotav1alpha1.QuotaDefinitionLabel] = qdef.Name
 
 	effects := map[string]corev1.ResourceList{}
 
-	switch r.Config.Mode {
-	case config.SINGULAR:
-		qiName, ok := colactrlutil.GetLabel(namespace, openmcpv1alpha1.SingularQuotaIncreaseLabel)
+	switch qdef.Mode {
+	case quotav1alpha1.SINGULAR:
+		qiName, ok := ctrlutils.GetLabel(namespace, quotav1alpha1.SingularQuotaIncreaseLabel)
 		if !ok {
-			log.Info("No singular QuotaIncrease label found on namespace, ignoring QuotaIncreases", "label", openmcpv1alpha1.SingularQuotaIncreaseLabel)
+			log.Info("No singular QuotaIncrease label found on namespace, ignoring QuotaIncreases", "label", quotav1alpha1.SingularQuotaIncreaseLabel)
 			return rq, effects
 		}
 		for _, qi := range qis.Items {
@@ -214,8 +271,8 @@ func (r *QuotaController) computeResourceQuota(ctx context.Context, namespace *c
 				return rq, effects
 			}
 		}
-		log.Info("Referenced QuotaIncrease not found in namespace", "label", openmcpv1alpha1.SingularQuotaIncreaseLabel, "QuotaIncrease", qiName)
-	case config.CUMULATIVE:
+		log.Info("Referenced QuotaIncrease not found in namespace", "label", quotav1alpha1.SingularQuotaIncreaseLabel, "QuotaIncrease", qiName)
+	case quotav1alpha1.CUMULATIVE:
 		for _, qi := range qis.Items {
 			effects[qi.Name] = corev1.ResourceList{}
 			for name, quantity := range qi.Spec.Hard {
@@ -229,7 +286,7 @@ func (r *QuotaController) computeResourceQuota(ctx context.Context, namespace *c
 				}
 			}
 		}
-	case config.MAXIMUM:
+	case quotav1alpha1.MAXIMUM:
 		maxQuotas := computeMaxQuotaMapping(rq.Spec.Hard, qis)
 		for resource, qi := range maxQuotas {
 			if _, ok := effects[qi.Name]; !ok {
@@ -244,8 +301,8 @@ func (r *QuotaController) computeResourceQuota(ctx context.Context, namespace *c
 
 // computeMaxQuotaMapping maps resources to the quota increases which provide the highest quantity for these resources, respectively.
 // Note that resources for which the base definition already contains the highest quantity are not included in the mapping.
-func computeMaxQuotaMapping(base corev1.ResourceList, qis *openmcpv1alpha1.QuotaIncreaseList) map[corev1.ResourceName]*openmcpv1alpha1.QuotaIncrease {
-	maxQuotas := map[corev1.ResourceName]*openmcpv1alpha1.QuotaIncrease{}
+func computeMaxQuotaMapping(base corev1.ResourceList, qis *quotav1alpha1.QuotaIncreaseList) map[corev1.ResourceName]*quotav1alpha1.QuotaIncrease {
+	maxQuotas := map[corev1.ResourceName]*quotav1alpha1.QuotaIncrease{}
 	for _, qi := range qis.Items {
 		for resource, quantity := range qi.Spec.Hard {
 			maxQ, ok := maxQuotas[resource]
@@ -276,35 +333,35 @@ func effectAsString(data corev1.ResourceList) string {
 
 // evaluateEffectiveness is responsible for setting the effect annotation on all QuotaIncrease resources.
 // If deletion of ineffective QuotaIncreases is enabled, it will also delete QuotaIncreases that are no longer effective.
-func (r *QuotaController) evaluateEffectiveness(ctx context.Context, namespace *corev1.Namespace, qis *openmcpv1alpha1.QuotaIncreaseList, effects map[string]corev1.ResourceList) error {
+func (r *QuotaController) evaluateEffectiveness(ctx context.Context, namespace *corev1.Namespace, qdef *quotav1alpha1.QuotaDefinition, qis *quotav1alpha1.QuotaIncreaseList, effects map[string]corev1.ResourceList) error {
 	log := logging.FromContextOrPanic(ctx)
 
 	singularQIName := ""
 	prefix := ""
-	if r.Config.Mode == config.SINGULAR {
-		singularQIName, _ = colactrlutil.GetLabel(namespace, openmcpv1alpha1.SingularQuotaIncreaseLabel)
-		prefix = openmcpv1alpha1.ActiveSingularQuotaIncreaseEffectPrefix
+	if qdef.Mode == quotav1alpha1.SINGULAR {
+		singularQIName, _ = ctrlutils.GetLabel(namespace, quotav1alpha1.SingularQuotaIncreaseLabel)
+		prefix = quotav1alpha1.ActiveSingularQuotaIncreaseEffectPrefix
 	}
 
 	var errs error
 	for _, qi := range qis.Items {
 		effect := effects[qi.Name]
-		if !r.Config.DeleteIneffectiveQuotas || len(effect) > 0 {
+		if !qdef.DeleteIneffectiveQuotas || len(effect) > 0 {
 			// patch effect annotation on QuotaIncrease
 			effectString := effectAsString(effect)
-			if r.Config.Mode == config.SINGULAR && qi.Name == singularQIName {
+			if qdef.Mode == quotav1alpha1.SINGULAR && qi.Name == singularQIName {
 				if effectString == "" {
 					effectString = prefix
 				} else {
 					effectString = fmt.Sprintf("%s %s", prefix, effectString)
 				}
 			}
-			errs = errors.Join(errs, colactrlutil.EnsureAnnotation(ctx, r.Client, &qi, openmcpv1alpha1.EffectAnnotation, effectString, true, colactrlutil.OVERWRITE))
-			errs = errors.Join(errs, colactrlutil.EnsureLabel(ctx, r.Client, &qi, openmcpv1alpha1.QuotaIncreaseOperationModeLabel, string(r.Config.Mode), true, colactrlutil.OVERWRITE))
-		} else if !(r.Config.Mode == config.SINGULAR && qi.Name == singularQIName) {
+			errs = errors.Join(errs, ctrlutils.EnsureAnnotation(ctx, r.OnboardingCluster, &qi, quotav1alpha1.EffectAnnotation, effectString, true, ctrlutils.OVERWRITE))
+			errs = errors.Join(errs, ctrlutils.EnsureLabel(ctx, r.OnboardingCluster, &qi, quotav1alpha1.QuotaIncreaseOperationModeLabel, string(qdef.Mode), true, ctrlutils.OVERWRITE))
+		} else if !(qdef.Mode == quotav1alpha1.SINGULAR && qi.Name == singularQIName) {
 			// delete QuotaIncrease
 			log.Info("Deleting ineffective QuotaIncrease", "quotaIncrease", client.ObjectKeyFromObject(&qi).String())
-			errs = errors.Join(errs, r.Client.Delete(ctx, &qi))
+			errs = errors.Join(errs, r.OnboardingCluster.Delete(ctx, &qi))
 		}
 	}
 

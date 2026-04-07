@@ -24,6 +24,9 @@ var (
 
 	// QuotaDefinitionLabel is used to mark the ResourceQuotas with the QuotaDefinition they are based on.
 	QuotaDefinitionLabel = LabelPrefix + "/quota-definition"
+
+	// QuotaOperationLabel is a more specific version of the OperationLabel (openmcp.cloud/operation).
+	QuotaOperationLabel = LabelPrefix + "/operation"
 )
 
 const (

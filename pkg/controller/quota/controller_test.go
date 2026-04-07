@@ -2,7 +2,7 @@ package quota_test
 
 import (
 	"fmt"
-	"path"
+	"path/filepath"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -22,17 +22,19 @@ import (
 	quotainstall "github.com/openmcp-project/quota-operator/api/install"
 	quotav1alpha1 "github.com/openmcp-project/quota-operator/api/v1alpha1"
 	quotacontroller "github.com/openmcp-project/quota-operator/pkg/controller/quota"
-	"github.com/openmcp-project/quota-operator/pkg/controller/quota/config"
+)
+
+const (
+	providerName      = "quota"
+	platformCluster   = "platform"
+	onboardingCluster = "onboarding"
+	rec               = providerName
 )
 
 func TestConfig(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Quota Controller Test Suite")
 }
-
-const (
-	clusterKey = "cluster"
-)
 
 func matchNumericQuantity(val int64) gtypes.GomegaMatcher {
 	return WithTransform(func(q resource.Quantity) int64 {
@@ -62,123 +64,121 @@ func withPointerizedSlice[T any](matcher gtypes.GomegaMatcher) gtypes.GomegaMatc
 	}, matcher)
 }
 
-func defaultTestSetup(mode config.QuotaIncreaseOperatingMode, deleteIneffectiveQuotas bool, testDataPathSegments ...string) *testutils.ComplexEnvironment {
-	cfg, err := config.LoadConfig(path.Join(path.Join(testDataPathSegments...), "config"))
-	Expect(err).ToNot(HaveOccurred())
-	activeQuotaDefinitions := cfg.GetActiveQuotaDefinitions()
-	sc := runtime.NewScheme()
-	quotainstall.Install(sc)
-	builder := testutils.NewComplexEnvironmentBuilder().WithInitObjectPath(clusterKey, testDataPathSegments...).WithFakeClient(clusterKey, sc)
-	for _, qd := range cfg.Quotas {
-		qd.Mode = mode
-		qd.DeleteIneffectiveQuotas = deleteIneffectiveQuotas
-		builder.WithReconcilerConstructor(qd.Name, func(c ...client.Client) reconcile.Reconciler {
-			return quotacontroller.NewQuotaController(c[0], qd, activeQuotaDefinitions)
-		}, clusterKey)
+func defaultTestSetup(mode quotav1alpha1.QuotaIncreaseOperatingMode, deleteIneffectiveQuotas bool, testDataPathSegments ...string) *testutils.ComplexEnvironment {
+	env := testutils.NewComplexEnvironmentBuilder().
+		WithInitObjectPath(platformCluster, filepath.Join(testDataPathSegments...), "platform").
+		WithInitObjectPath(onboardingCluster, filepath.Join(testDataPathSegments...), "onboarding").
+		WithFakeClient(platformCluster, quotainstall.InstallOperatorAPIsPlatform(runtime.NewScheme())).
+		WithFakeClient(onboardingCluster, quotainstall.InstallOperatorAPIsOnboarding(runtime.NewScheme())).
+		WithReconcilerConstructor(rec, func(c ...client.Client) reconcile.Reconciler {
+			return quotacontroller.NewQuotaController(c[0], c[1], providerName)
+		}, platformCluster, onboardingCluster).
+		Build()
+
+	cfg := &quotav1alpha1.QuotaServiceConfig{}
+	cfg.SetName(providerName)
+	ExpectWithOffset(1, env.Client(platformCluster).Get(env.Ctx, client.ObjectKeyFromObject(cfg), cfg)).To(Succeed())
+	for i := range cfg.Spec.Quotas {
+		cfg.Spec.Quotas[i].Mode = mode
+		cfg.Spec.Quotas[i].DeleteIneffectiveQuotas = deleteIneffectiveQuotas
 	}
-	return builder.Build()
+	ExpectWithOffset(1, env.Client(platformCluster).Update(env.Ctx, cfg)).To(Succeed())
+
+	return env
 }
 
 var _ = Describe("CO-1155 QuotaIncrease Controller", func() {
 	Context("Independent of Operating Mode", func() {
 
-		It("should ignore namespaces with a base quota label belonging to another active QuotaDefinition", func() {
-			env := defaultTestSetup(config.CUMULATIVE, false, "testdata", "test-01")
+		It("should ignore namespaces with a managed-by label belonging to another controller instance", func() {
+			env := defaultTestSetup(quotav1alpha1.CUMULATIVE, false, "testdata", "test-01")
 
-			ns_project := &corev1.Namespace{}
-			ns_project.SetName("ns-project")
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
-			Expect(openmcpctrlutil.EnsureLabel(env.Ctx, env.Client(clusterKey), ns_project, quotav1alpha1.BaseQuotaLabel, "project", true)).To(Succeed())
+			ns := &corev1.Namespace{}
+			ns.SetName("ns-normal")
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(ns), ns)).To(Succeed())
+			Expect(openmcpctrlutil.EnsureLabel(env.Ctx, env.Client(onboardingCluster), ns, quotav1alpha1.ManagedByLabel, "foreign", true)).To(Succeed())
 
 			// verify that no ResourceQuotas exist
 			rql := &corev1.ResourceQuotaList{}
-			Expect(env.Client(clusterKey).List(env.Ctx, rql, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, rql, client.InNamespace(ns.Name))).To(Succeed())
 			Expect(rql.Items).To(BeEmpty())
 
-			// reconcile project namespace with 'all' quota controller
-			env.ShouldReconcile("all", testutils.RequestFromObject(ns_project))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns))
 
 			// verify that no ResourceQuota was created
-			Expect(env.Client(clusterKey).List(env.Ctx, rql, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, rql, client.InNamespace(ns.Name))).To(Succeed())
 			Expect(rql.Items).To(BeEmpty())
 		})
 
-		It("should overwrite base quota labels belonging to unknown QuotaDefinitions", func() {
-			env := defaultTestSetup(config.CUMULATIVE, false, "testdata", "test-01")
+		It("should use the first matching quota definition", func() {
+			env := defaultTestSetup(quotav1alpha1.CUMULATIVE, false, "testdata", "test-01")
 
-			ns_project := &corev1.Namespace{}
-			ns_project.SetName("ns-project")
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
-			Expect(openmcpctrlutil.EnsureLabel(env.Ctx, env.Client(clusterKey), ns_project, quotav1alpha1.BaseQuotaLabel, "unknown", true)).To(Succeed())
+			ns := &corev1.Namespace{}
+			ns.SetName("ns-normal")
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(ns), ns)).To(Succeed())
 
 			// verify that no ResourceQuotas exist
 			rql := &corev1.ResourceQuotaList{}
-			Expect(env.Client(clusterKey).List(env.Ctx, rql, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, rql, client.InNamespace(ns.Name))).To(Succeed())
 			Expect(rql.Items).To(BeEmpty())
 
-			// reconcile project namespace with 'all' quota controller
-			env.ShouldReconcile("all", testutils.RequestFromObject(ns_project))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns))
 
-			// verify that ResourceQuota was created
-			Expect(env.Client(clusterKey).List(env.Ctx, rql, client.InNamespace(ns_project.Name))).To(Succeed())
-			Expect(rql.Items).To(HaveLen(1))
-			Expect(rql.Items[0].Name).To(Equal("all"))
-
-			// verify that base quota label on namespace was overwritten
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
-			Expect(ns_project.Labels).To(HaveKeyWithValue(quotav1alpha1.BaseQuotaLabel, "all"))
+			// verify that no ResourceQuota was created
+			Expect(env.Client(onboardingCluster).List(env.Ctx, rql, client.InNamespace(ns.Name))).To(Succeed())
+			Expect(rql.Items).ToNot(BeEmpty())
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(ns), ns)).To(Succeed())
+			Expect(ns.Labels).To(HaveKeyWithValue(quotav1alpha1.BaseQuotaLabel, "all"))
 		})
 
 	})
 
-	Context(fmt.Sprintf("Operating Mode: %s", config.CUMULATIVE), func() {
+	Context(fmt.Sprintf("Operating Mode: %s", quotav1alpha1.CUMULATIVE), func() {
 
 		It("should add the operating mode label to the namespace", func() {
-			env := defaultTestSetup(config.CUMULATIVE, false, "testdata", "test-01")
+			env := defaultTestSetup(quotav1alpha1.CUMULATIVE, false, "testdata", "test-01")
 
-			ns_project := &corev1.Namespace{}
-			ns_project.SetName("ns-project")
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
-			Expect(openmcpctrlutil.HasLabel(ns_project, quotav1alpha1.QuotaIncreaseOperationModeLabel)).To(BeFalse())
-			env.ShouldReconcile("project", testutils.RequestFromObject(ns_project))
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
-			Expect(ns_project.Labels).To(HaveKeyWithValue(quotav1alpha1.QuotaIncreaseOperationModeLabel, string(config.CUMULATIVE)))
+			ns := &corev1.Namespace{}
+			ns.SetName("ns-project")
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(ns), ns)).To(Succeed())
+			Expect(openmcpctrlutil.HasLabel(ns, quotav1alpha1.QuotaIncreaseOperationModeLabel)).To(BeFalse())
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns))
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(ns), ns)).To(Succeed())
+			Expect(ns.Labels).To(HaveKeyWithValue(quotav1alpha1.QuotaIncreaseOperationModeLabel, string(quotav1alpha1.CUMULATIVE)))
 		})
 
 		It("should apply quota increases correctly", func() {
-			env := defaultTestSetup(config.CUMULATIVE, false, "testdata", "test-01")
+			env := defaultTestSetup(quotav1alpha1.CUMULATIVE, false, "testdata", "test-01")
 
 			// verify test setup
-			ns_project := &corev1.Namespace{}
-			ns_project.SetName("ns-project")
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
-			Expect(openmcpctrlutil.HasLabel(ns_project, quotav1alpha1.BaseQuotaLabel)).To(BeFalse())
-			rq_project := &corev1.ResourceQuota{}
-			rq_project.SetName("project")
-			rq_project.SetNamespace(ns_project.Name)
-			err := env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(rq_project), rq_project)
+			ns := &corev1.Namespace{}
+			ns.SetName("ns-project")
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(ns), ns)).To(Succeed())
+			Expect(openmcpctrlutil.HasLabel(ns, quotav1alpha1.BaseQuotaLabel)).To(BeFalse())
+			rq := &corev1.ResourceQuota{}
+			rq.SetName("project")
+			rq.SetNamespace(ns.Name)
+			err := env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(rq), rq)
 			Expect(err).To(HaveOccurred())
 			Expect(apierrors.IsNotFound(err)).To(BeTrue())
 
-			// reconcile project namespace with project quota controller
-			env.ShouldReconcile("project", testutils.RequestFromObject(ns_project))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns))
 			// namespace should have been labeled
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
-			Expect(ns_project.Labels).To(HaveKeyWithValue(quotav1alpha1.BaseQuotaLabel, "project"))
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(ns), ns)).To(Succeed())
+			Expect(ns.Labels).To(HaveKeyWithValue(quotav1alpha1.BaseQuotaLabel, "project"))
 			// ResourceQuota should have been created
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(rq_project), rq_project)).To(Succeed())
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(rq), rq)).To(Succeed())
 			// ResourceQuota should have owner reference pointing to namespace
-			Expect(rq_project.OwnerReferences).To(ConsistOf(MatchFields(IgnoreExtras, Fields{
+			Expect(rq.OwnerReferences).To(ConsistOf(MatchFields(IgnoreExtras, Fields{
 				"Kind": Equal("Namespace"),
-				"Name": Equal(ns_project.Name),
+				"Name": Equal(ns.Name),
 			})))
 
 			// list all QuotaIncreases in project namespace to determine expected secret quantity
-			rawQ := env.Reconciler("project").(*quotacontroller.QuotaController).Config.ResourceQuotaTemplate.Spec.Hard["count/secrets"]
-			secretQ := rawQ.Value()
+			secretQ := int64(3)
 			var cmQ int64 = 0
 			qis := &quotav1alpha1.QuotaIncreaseList{}
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns.Name))).To(Succeed())
 			for _, qi := range qis.Items {
 				rawQ := qi.Spec.Hard["count/secrets"]
 				secretQ += rawQ.Value()
@@ -187,8 +187,8 @@ var _ = Describe("CO-1155 QuotaIncrease Controller", func() {
 					cmQ += rawQ.Value()
 				}
 			}
-			Expect(rq_project.Spec.Hard["count/secrets"]).To(matchNumericQuantity(secretQ))
-			Expect(rq_project.Spec.Hard["count/configmaps"]).To(matchNumericQuantity(cmQ))
+			Expect(rq.Spec.Hard["count/secrets"]).To(matchNumericQuantity(secretQ))
+			Expect(rq.Spec.Hard["count/configmaps"]).To(matchNumericQuantity(cmQ))
 
 			// QuotaIncreases should have been annotated and labeled
 			for _, qi := range qis.Items {
@@ -197,63 +197,61 @@ var _ = Describe("CO-1155 QuotaIncrease Controller", func() {
 				for res, q := range qi.Spec.Hard {
 					Expect(value).To(ContainSubstring(fmt.Sprintf("%s: %s", res, q.String())))
 				}
-				Expect(qi.Labels).To(HaveKeyWithValue(quotav1alpha1.QuotaIncreaseOperationModeLabel, string(config.CUMULATIVE)))
+				Expect(qi.Labels).To(HaveKeyWithValue(quotav1alpha1.QuotaIncreaseOperationModeLabel, string(quotav1alpha1.CUMULATIVE)))
 			}
 		})
 
 		It("should not delete ineffective QuotaIncreases if deleteIneffectiveQuotas is false", func() {
-			env := defaultTestSetup(config.CUMULATIVE, false, "testdata", "test-01")
+			env := defaultTestSetup(quotav1alpha1.CUMULATIVE, false, "testdata", "test-01")
 
 			ns_project := &corev1.Namespace{}
 			ns_project.SetName("ns-project")
 
 			// count QuotaIncreases
 			qis := &quotav1alpha1.QuotaIncreaseList{}
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			qiCountOld := len(qis.Items)
 			Expect(qiCountOld).To(BeNumerically(">=", 3))
 			Expect(qis.Items).To(withPointerizedSlice[quotav1alpha1.QuotaIncrease](ContainElement(haveName("qi-project-empty"))))
 
-			// reconcile project namespace with project quota controller
-			env.ShouldReconcile("project", testutils.RequestFromObject(ns_project))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_project))
 
 			// for cumulative mode, only empty QuotaIncreases are considered ineffective
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			Expect(qis.Items).To(HaveLen(qiCountOld))
 			Expect(qis.Items).To(withPointerizedSlice[quotav1alpha1.QuotaIncrease](ContainElement(haveName("qi-project-empty"))))
 
 			// check workspace namespace
 			ns_workspace := &corev1.Namespace{}
 			ns_workspace.SetName("ns-workspace")
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			Expect(qis.Items).ToNot(BeEmpty())
 			qiCountOld = len(qis.Items)
 
 			// reconcile workspace namespace with workspace quota controller
-			env.ShouldReconcile("workspace", testutils.RequestFromObject(ns_workspace))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_workspace))
 
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			Expect(qis.Items).To(HaveLen(qiCountOld))
 		})
 
 		It("should delete ineffective QuotaIncreases if deleteIneffectiveQuotas is true", func() {
-			env := defaultTestSetup(config.CUMULATIVE, true, "testdata", "test-01")
+			env := defaultTestSetup(quotav1alpha1.CUMULATIVE, true, "testdata", "test-01")
 
 			ns_project := &corev1.Namespace{}
 			ns_project.SetName("ns-project")
 
 			// count QuotaIncreases
 			qis := &quotav1alpha1.QuotaIncreaseList{}
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			qiCountOld := len(qis.Items)
 			Expect(qiCountOld).To(Equal(4))
 			Expect(qis.Items).To(withPointerizedSlice[quotav1alpha1.QuotaIncrease](ContainElement(haveName("qi-project-empty"))))
 
-			// reconcile project namespace with project quota controller
-			env.ShouldReconcile("project", testutils.RequestFromObject(ns_project))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_project))
 
 			// for cumulative mode, only empty QuotaIncreases are considered ineffective
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			qiCountNew := len(qis.Items)
 			Expect(qiCountNew).To(Equal(qiCountOld - 1))
 			Expect(qis.Items).ToNot(withPointerizedSlice[quotav1alpha1.QuotaIncrease](ContainElement(haveName("qi-project-empty"))))
@@ -261,56 +259,55 @@ var _ = Describe("CO-1155 QuotaIncrease Controller", func() {
 			// check workspace namespace
 			ns_workspace := &corev1.Namespace{}
 			ns_workspace.SetName("ns-workspace")
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_workspace.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_workspace.Name))).To(Succeed())
 			Expect(qis.Items).ToNot(BeEmpty())
 			qiCountOld = len(qis.Items)
 
 			// reconcile workspace namespace with workspace quota controller
-			env.ShouldReconcile("workspace", testutils.RequestFromObject(ns_workspace))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_workspace))
 
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_workspace.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_workspace.Name))).To(Succeed())
 			qiCountNew = len(qis.Items)
 			Expect(qiCountNew).To(Equal(qiCountOld))
 		})
 
 	})
 
-	Context(fmt.Sprintf("Operating Mode: %s", config.MAXIMUM), func() {
+	Context(fmt.Sprintf("Operating Mode: %s", quotav1alpha1.MAXIMUM), func() {
 
 		It("should add the operating mode label to the namespace", func() {
-			env := defaultTestSetup(config.MAXIMUM, false, "testdata", "test-01")
+			env := defaultTestSetup(quotav1alpha1.MAXIMUM, false, "testdata", "test-01")
 
 			ns_project := &corev1.Namespace{}
 			ns_project.SetName("ns-project")
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
 			Expect(openmcpctrlutil.HasLabel(ns_project, quotav1alpha1.QuotaIncreaseOperationModeLabel)).To(BeFalse())
-			env.ShouldReconcile("project", testutils.RequestFromObject(ns_project))
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
-			Expect(ns_project.Labels).To(HaveKeyWithValue(quotav1alpha1.QuotaIncreaseOperationModeLabel, string(config.MAXIMUM)))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_project))
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
+			Expect(ns_project.Labels).To(HaveKeyWithValue(quotav1alpha1.QuotaIncreaseOperationModeLabel, string(quotav1alpha1.MAXIMUM)))
 		})
 
 		It("should apply quota increases correctly", func() {
-			env := defaultTestSetup(config.MAXIMUM, false, "testdata", "test-01")
+			env := defaultTestSetup(quotav1alpha1.MAXIMUM, false, "testdata", "test-01")
 
 			// verify test setup
 			ns_project := &corev1.Namespace{}
 			ns_project.SetName("ns-project")
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
 			Expect(openmcpctrlutil.HasLabel(ns_project, quotav1alpha1.BaseQuotaLabel)).To(BeFalse())
 			rq_project := &corev1.ResourceQuota{}
 			rq_project.SetName("project")
 			rq_project.SetNamespace(ns_project.Name)
-			err := env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(rq_project), rq_project)
+			err := env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(rq_project), rq_project)
 			Expect(err).To(HaveOccurred())
 			Expect(apierrors.IsNotFound(err)).To(BeTrue())
 
-			// reconcile project namespace with project quota controller
-			env.ShouldReconcile("project", testutils.RequestFromObject(ns_project))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_project))
 			// namespace should have been labeled
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
 			Expect(ns_project.Labels).To(HaveKeyWithValue(quotav1alpha1.BaseQuotaLabel, "project"))
 			// ResourceQuota should have been created
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(rq_project), rq_project)).To(Succeed())
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(rq_project), rq_project)).To(Succeed())
 			// ResourceQuota should have owner reference pointing to namespace
 			Expect(rq_project.OwnerReferences).To(ConsistOf(MatchFields(IgnoreExtras, Fields{
 				"Kind": Equal("Namespace"),
@@ -318,11 +315,16 @@ var _ = Describe("CO-1155 QuotaIncrease Controller", func() {
 			})))
 
 			// list all QuotaIncreases in project namespace to determine expected secret quantity
-			secretQ := env.Reconciler("project").(*quotacontroller.QuotaController).Config.ResourceQuotaTemplate.Spec.Hard["count/secrets"].DeepCopy()
-			cmQ := env.Reconciler("project").(*quotacontroller.QuotaController).Config.ResourceQuotaTemplate.Spec.Hard["count/configmaps"].DeepCopy()
-			saQ := env.Reconciler("project").(*quotacontroller.QuotaController).Config.ResourceQuotaTemplate.Spec.Hard["count/serviceaccounts"].DeepCopy()
+			cfg := &quotav1alpha1.QuotaServiceConfig{}
+			cfg.SetName(providerName)
+			Expect(env.Client(platformCluster).Get(env.Ctx, client.ObjectKeyFromObject(cfg), cfg)).To(Succeed())
+			qd := cfg.Spec.GetQuotaDefinitionForName("project")
+			Expect(qd).ToNot(BeNil())
+			secretQ := qd.ResourceQuotaTemplate.Spec.Hard["count/secrets"].DeepCopy()
+			cmQ := qd.ResourceQuotaTemplate.Spec.Hard["count/configmaps"].DeepCopy()
+			saQ := qd.ResourceQuotaTemplate.Spec.Hard["count/serviceaccounts"].DeepCopy()
 			qis := &quotav1alpha1.QuotaIncreaseList{}
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			for _, qi := range qis.Items {
 				rawQ, ok := qi.Spec.Hard["count/secrets"]
 				if ok && rawQ.Cmp(secretQ) > 0 {
@@ -358,63 +360,61 @@ var _ = Describe("CO-1155 QuotaIncrease Controller", func() {
 				default:
 					Expect(value).To(BeEmpty())
 				}
-				Expect(qi.Labels).To(HaveKeyWithValue(quotav1alpha1.QuotaIncreaseOperationModeLabel, string(config.MAXIMUM)))
+				Expect(qi.Labels).To(HaveKeyWithValue(quotav1alpha1.QuotaIncreaseOperationModeLabel, string(quotav1alpha1.MAXIMUM)))
 			}
 		})
 
 		It("should not delete ineffective QuotaIncreases if deleteIneffectiveQuotas is false", func() {
-			env := defaultTestSetup(config.MAXIMUM, false, "testdata", "test-01")
+			env := defaultTestSetup(quotav1alpha1.MAXIMUM, false, "testdata", "test-01")
 
 			ns_project := &corev1.Namespace{}
 			ns_project.SetName("ns-project")
 
 			// count QuotaIncreases
 			qis := &quotav1alpha1.QuotaIncreaseList{}
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			qiCountOld := len(qis.Items)
 			Expect(qiCountOld).To(Equal(4))
 			Expect(qis.Items).To(withPointerizedSlice[quotav1alpha1.QuotaIncrease](ContainElements(haveName("qi-project-med"), haveName("qi-project-empty"))))
 
-			// reconcile project namespace with project quota controller
-			env.ShouldReconcile("project", testutils.RequestFromObject(ns_project))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_project))
 
 			// for maximum mode, qi-project-med and qi-project-empty are considered ineffective
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			Expect(qis.Items).To(HaveLen(qiCountOld))
 			Expect(qis.Items).To(withPointerizedSlice[quotav1alpha1.QuotaIncrease](ContainElements(haveName("qi-project-med"), haveName("qi-project-empty"))))
 
 			// check workspace namespace
 			ns_workspace := &corev1.Namespace{}
 			ns_workspace.SetName("ns-workspace")
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_workspace.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_workspace.Name))).To(Succeed())
 			Expect(qis.Items).ToNot(BeEmpty())
 			qiCountOld = len(qis.Items)
 
 			// reconcile workspace namespace with workspace quota controller
-			env.ShouldReconcile("workspace", testutils.RequestFromObject(ns_workspace))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_workspace))
 
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_workspace.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_workspace.Name))).To(Succeed())
 			Expect(qis.Items).To(HaveLen(qiCountOld))
 		})
 
 		It("should delete ineffective QuotaIncreases if deleteIneffectiveQuotas is true", func() {
-			env := defaultTestSetup(config.MAXIMUM, true, "testdata", "test-01")
+			env := defaultTestSetup(quotav1alpha1.MAXIMUM, true, "testdata", "test-01")
 
 			ns_project := &corev1.Namespace{}
 			ns_project.SetName("ns-project")
 
 			// count QuotaIncreases
 			qis := &quotav1alpha1.QuotaIncreaseList{}
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			qiCountOld := len(qis.Items)
 			Expect(qiCountOld).To(Equal(4))
 			Expect(qis.Items).To(withPointerizedSlice[quotav1alpha1.QuotaIncrease](ContainElements(haveName("qi-project-med"), haveName("qi-project-empty"))))
 
-			// reconcile project namespace with project quota controller
-			env.ShouldReconcile("project", testutils.RequestFromObject(ns_project))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_project))
 
 			// for maximum mode, qi-project-med and qi-project-empty are considered ineffective
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			qiCountNew := len(qis.Items)
 			Expect(qiCountNew).To(Equal(qiCountOld - 2))
 			Expect(qis.Items).ToNot(withPointerizedSlice[quotav1alpha1.QuotaIncrease](Or(ContainElement(haveName("qi-project-med")), ContainElement(haveName("qi-project-empty")))))
@@ -422,74 +422,73 @@ var _ = Describe("CO-1155 QuotaIncrease Controller", func() {
 			// check workspace namespace
 			ns_workspace := &corev1.Namespace{}
 			ns_workspace.SetName("ns-workspace")
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_workspace.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_workspace.Name))).To(Succeed())
 			Expect(qis.Items).ToNot(BeEmpty())
 
 			// reconcile workspace namespace with workspace quota controller
-			env.ShouldReconcile("workspace", testutils.RequestFromObject(ns_workspace))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_workspace))
 
 			// the only QuotaIncrease in the workspace namespace has a lower quantity than the base quota and is therefore ineffective
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_workspace.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_workspace.Name))).To(Succeed())
 			Expect(qis.Items).To(BeEmpty())
 		})
 
 		It("should determine effectiveness among identical QuotaIncreases deterministically", func() {
-			env := defaultTestSetup(config.MAXIMUM, true, "testdata", "test-02")
+			env := defaultTestSetup(quotav1alpha1.MAXIMUM, true, "testdata", "test-02")
 
 			ns_normal := &corev1.Namespace{}
 			ns_normal.SetName("ns-normal")
 
 			// count QuotaIncreases
 			qis := &quotav1alpha1.QuotaIncreaseList{}
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_normal.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_normal.Name))).To(Succeed())
 			Expect(qis.Items).To(HaveLen(4))
 
 			// reconcile normal namespace with all quota controller
-			env.ShouldReconcile("all", testutils.RequestFromObject(ns_normal))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_normal))
 
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_normal.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_normal.Name))).To(Succeed())
 			Expect(qis.Items).To(HaveLen(1))
 			Expect(qis.Items[0].Name).To(Equal("qi-normal-alpha"))
 		})
 
 	})
 
-	Context(fmt.Sprintf("Operating Mode: %s", config.SINGULAR), func() {
+	Context(fmt.Sprintf("Operating Mode: %s", quotav1alpha1.SINGULAR), func() {
 
 		It("should add the operating mode label to the namespace", func() {
-			env := defaultTestSetup(config.SINGULAR, false, "testdata", "test-01")
+			env := defaultTestSetup(quotav1alpha1.SINGULAR, false, "testdata", "test-01")
 
 			ns_project := &corev1.Namespace{}
 			ns_project.SetName("ns-project")
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
 			Expect(openmcpctrlutil.HasLabel(ns_project, quotav1alpha1.QuotaIncreaseOperationModeLabel)).To(BeFalse())
-			env.ShouldReconcile("project", testutils.RequestFromObject(ns_project))
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
-			Expect(ns_project.Labels).To(HaveKeyWithValue(quotav1alpha1.QuotaIncreaseOperationModeLabel, string(config.SINGULAR)))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_project))
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
+			Expect(ns_project.Labels).To(HaveKeyWithValue(quotav1alpha1.QuotaIncreaseOperationModeLabel, string(quotav1alpha1.SINGULAR)))
 		})
 
 		It("should apply quota increases correctly", func() {
-			env := defaultTestSetup(config.SINGULAR, false, "testdata", "test-01")
+			env := defaultTestSetup(quotav1alpha1.SINGULAR, false, "testdata", "test-01")
 
 			// verify test setup
 			ns_project := &corev1.Namespace{}
 			ns_project.SetName("ns-project")
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
 			Expect(openmcpctrlutil.HasLabel(ns_project, quotav1alpha1.BaseQuotaLabel)).To(BeFalse())
 			rq_project := &corev1.ResourceQuota{}
 			rq_project.SetName("project")
 			rq_project.SetNamespace(ns_project.Name)
-			err := env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(rq_project), rq_project)
+			err := env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(rq_project), rq_project)
 			Expect(err).To(HaveOccurred())
 			Expect(apierrors.IsNotFound(err)).To(BeTrue())
 
-			// reconcile project namespace with project quota controller
-			env.ShouldReconcile("project", testutils.RequestFromObject(ns_project))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_project))
 			// namespace should have been labeled
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
 			Expect(ns_project.Labels).To(HaveKeyWithValue(quotav1alpha1.BaseQuotaLabel, "project"))
 			// ResourceQuota should have been created
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(rq_project), rq_project)).To(Succeed())
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(rq_project), rq_project)).To(Succeed())
 			// ResourceQuota should have owner reference pointing to namespace
 			Expect(rq_project.OwnerReferences).To(ConsistOf(MatchFields(IgnoreExtras, Fields{
 				"Kind": Equal("Namespace"),
@@ -497,22 +496,26 @@ var _ = Describe("CO-1155 QuotaIncrease Controller", func() {
 			})))
 
 			// should just use default quota, if use label is missing on namespace
-			cfg := env.Reconciler("project").(*quotacontroller.QuotaController).Config
-			Expect(rq_project.Spec).To(Equal(*cfg.ResourceQuotaTemplate.Spec))
+			cfg := &quotav1alpha1.QuotaServiceConfig{}
+			cfg.SetName(providerName)
+			Expect(env.Client(platformCluster).Get(env.Ctx, client.ObjectKeyFromObject(cfg), cfg)).To(Succeed())
+			qd := cfg.Spec.GetQuotaDefinitionForName("project")
+			Expect(qd).ToNot(BeNil())
+			Expect(rq_project.Spec).To(Equal(qd.ResourceQuotaTemplate.Spec))
 
 			// list all QuotaIncreases in project namespace to verify empty effect annotation
 			qis := &quotav1alpha1.QuotaIncreaseList{}
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			for _, qi := range qis.Items {
 				Expect(qi.Annotations).To(HaveKeyWithValue(quotav1alpha1.EffectAnnotation, ""))
 			}
 
 			// add use label to namespace
-			Expect(openmcpctrlutil.EnsureLabel(env.Ctx, env.Client(clusterKey), ns_project, quotav1alpha1.SingularQuotaIncreaseLabel, "qi-project-sa", true)).To(Succeed())
-			env.ShouldReconcile("project", testutils.RequestFromObject(ns_project))
+			Expect(openmcpctrlutil.EnsureLabel(env.Ctx, env.Client(onboardingCluster), ns_project, quotav1alpha1.SingularQuotaIncreaseLabel, "qi-project-sa", true)).To(Succeed())
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_project))
 
 			// verify that QuotaIncrease was applied correctly
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			for _, qi := range qis.Items {
 				if qi.Name == "qi-project-sa" {
 					expectedPrefix := quotav1alpha1.ActiveSingularQuotaIncreaseEffectPrefix
@@ -523,107 +526,103 @@ var _ = Describe("CO-1155 QuotaIncrease Controller", func() {
 				} else {
 					Expect(qi.Annotations).To(HaveKeyWithValue(quotav1alpha1.EffectAnnotation, ""))
 				}
-				Expect(qi.Labels).To(HaveKeyWithValue(quotav1alpha1.QuotaIncreaseOperationModeLabel, string(config.SINGULAR)))
+				Expect(qi.Labels).To(HaveKeyWithValue(quotav1alpha1.QuotaIncreaseOperationModeLabel, string(quotav1alpha1.SINGULAR)))
 			}
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(rq_project), rq_project)).To(Succeed())
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(rq_project), rq_project)).To(Succeed())
 			Expect(rq_project.Spec.Hard["count/secrets"]).To(matchNumericQuantity(10))
 			Expect(rq_project.Spec.Hard["count/serviceaccounts"]).To(matchNumericQuantity(5))
 
 			// verify that the referenced QuotaIncrease does not reduce the base quota
 			ns_workspace := &corev1.Namespace{}
 			ns_workspace.SetName("ns-workspace")
-			env.ShouldReconcile("workspace", testutils.RequestFromObject(ns_workspace))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_workspace))
 			rq_workspace := &corev1.ResourceQuota{}
 			rq_workspace.SetName("workspace")
 			rq_workspace.SetNamespace(ns_workspace.Name)
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(rq_workspace), rq_workspace)).To(Succeed())
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(rq_workspace), rq_workspace)).To(Succeed())
 			old := rq_workspace.DeepCopy()
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(ns_workspace), ns_workspace)).To(Succeed())
-			Expect(openmcpctrlutil.EnsureLabel(env.Ctx, env.Client(clusterKey), ns_workspace, quotav1alpha1.SingularQuotaIncreaseLabel, "qi-workspace-min", true)).To(Succeed())
-			env.ShouldReconcile("workspace", testutils.RequestFromObject(ns_workspace))
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(rq_workspace), rq_workspace)).To(Succeed())
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(ns_workspace), ns_workspace)).To(Succeed())
+			Expect(openmcpctrlutil.EnsureLabel(env.Ctx, env.Client(onboardingCluster), ns_workspace, quotav1alpha1.SingularQuotaIncreaseLabel, "qi-workspace-min", true)).To(Succeed())
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_workspace))
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(rq_workspace), rq_workspace)).To(Succeed())
 			Expect(rq_workspace.Spec).To(Equal(old.Spec))
 			qi_workspace_min := &quotav1alpha1.QuotaIncrease{}
 			qi_workspace_min.SetName("qi-workspace-min")
 			qi_workspace_min.SetNamespace(ns_workspace.Name)
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(qi_workspace_min), qi_workspace_min)).To(Succeed())
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(qi_workspace_min), qi_workspace_min)).To(Succeed())
 			Expect(qi_workspace_min.Annotations).To(HaveKeyWithValue(quotav1alpha1.EffectAnnotation, quotav1alpha1.ActiveSingularQuotaIncreaseEffectPrefix))
 		})
 
 		It("should not delete ineffective QuotaIncreases if deleteIneffectiveQuotas is false", func() {
-			env := defaultTestSetup(config.SINGULAR, false, "testdata", "test-01")
+			env := defaultTestSetup(quotav1alpha1.SINGULAR, false, "testdata", "test-01")
 
 			ns_project := &corev1.Namespace{}
 			ns_project.SetName("ns-project")
 
 			// count QuotaIncreases
 			qis := &quotav1alpha1.QuotaIncreaseList{}
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			qiCountOld := len(qis.Items)
 			Expect(qiCountOld).To(Equal(4))
 
-			// reconcile project namespace with project quota controller
-			env.ShouldReconcile("project", testutils.RequestFromObject(ns_project))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_project))
 
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			Expect(qis.Items).To(HaveLen(qiCountOld))
 		})
 
 		It("should delete all QuotaIncreases if deleteIneffectiveQuotas is true and no use label is set", func() {
-			env := defaultTestSetup(config.SINGULAR, true, "testdata", "test-01")
+			env := defaultTestSetup(quotav1alpha1.SINGULAR, true, "testdata", "test-01")
 
 			ns_project := &corev1.Namespace{}
 			ns_project.SetName("ns-project")
 
 			// count QuotaIncreases
 			qis := &quotav1alpha1.QuotaIncreaseList{}
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			qiCountOld := len(qis.Items)
 			Expect(qiCountOld).To(Equal(4))
 
-			// reconcile project namespace with project quota controller
-			env.ShouldReconcile("project", testutils.RequestFromObject(ns_project))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_project))
 
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			Expect(qis.Items).To(BeEmpty())
 		})
 
 		It("should delete all other QuotaIncreases if deleteIneffectiveQuotas is true and a use label is set", func() {
-			env := defaultTestSetup(config.SINGULAR, true, "testdata", "test-01")
+			env := defaultTestSetup(quotav1alpha1.SINGULAR, true, "testdata", "test-01")
 
 			ns_project := &corev1.Namespace{}
 			ns_project.SetName("ns-project")
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
-			Expect(openmcpctrlutil.EnsureLabel(env.Ctx, env.Client(clusterKey), ns_project, quotav1alpha1.SingularQuotaIncreaseLabel, "qi-project-sa", true)).To(Succeed())
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(ns_project), ns_project)).To(Succeed())
+			Expect(openmcpctrlutil.EnsureLabel(env.Ctx, env.Client(onboardingCluster), ns_project, quotav1alpha1.SingularQuotaIncreaseLabel, "qi-project-sa", true)).To(Succeed())
 
 			// count QuotaIncreases
 			qis := &quotav1alpha1.QuotaIncreaseList{}
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			qiCountOld := len(qis.Items)
 			Expect(qiCountOld).To(Equal(4))
 
-			// reconcile project namespace with project quota controller
-			env.ShouldReconcile("project", testutils.RequestFromObject(ns_project))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_project))
 
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_project.Name))).To(Succeed())
 			Expect(qis.Items).To(HaveLen(1))
 			Expect(qis.Items[0].Name).To(Equal("qi-project-sa"))
 		})
 
 		It("should never delete the referenced QuotaIncrease, even if it is ineffective", func() {
-			env := defaultTestSetup(config.SINGULAR, true, "testdata", "test-01")
+			env := defaultTestSetup(quotav1alpha1.SINGULAR, true, "testdata", "test-01")
 
 			ns_workspace := &corev1.Namespace{}
 			ns_workspace.SetName("ns-workspace")
-			Expect(env.Client(clusterKey).Get(env.Ctx, client.ObjectKeyFromObject(ns_workspace), ns_workspace)).To(Succeed())
-			Expect(openmcpctrlutil.EnsureLabel(env.Ctx, env.Client(clusterKey), ns_workspace, quotav1alpha1.SingularQuotaIncreaseLabel, "qi-workspace-min", true)).To(Succeed())
+			Expect(env.Client(onboardingCluster).Get(env.Ctx, client.ObjectKeyFromObject(ns_workspace), ns_workspace)).To(Succeed())
+			Expect(openmcpctrlutil.EnsureLabel(env.Ctx, env.Client(onboardingCluster), ns_workspace, quotav1alpha1.SingularQuotaIncreaseLabel, "qi-workspace-min", true)).To(Succeed())
 
-			// reconcile project namespace with project quota controller
-			env.ShouldReconcile("project", testutils.RequestFromObject(ns_workspace))
+			env.ShouldReconcile(rec, testutils.RequestFromObject(ns_workspace))
 
 			// count QuotaIncreases
 			qis := &quotav1alpha1.QuotaIncreaseList{}
-			Expect(env.Client(clusterKey).List(env.Ctx, qis, client.InNamespace(ns_workspace.Name))).To(Succeed())
+			Expect(env.Client(onboardingCluster).List(env.Ctx, qis, client.InNamespace(ns_workspace.Name))).To(Succeed())
 			Expect(qis.Items).To(HaveLen(1))
 			Expect(qis.Items[0].Name).To(Equal("qi-workspace-min"))
 		})
