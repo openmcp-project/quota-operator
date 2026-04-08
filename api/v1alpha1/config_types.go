@@ -104,7 +104,7 @@ func (spec QuotaServiceConfigSpec) Validate() error {
 
 // ValidateRaw works like validate, but it returns a list of errors instead of an aggregated one.
 func (spec QuotaServiceConfigSpec) ValidateRaw() field.ErrorList {
-	allErrs := field.ErrorList{}
+	allErrs := field.ErrorList{} // nolint:prealloc
 
 	fldPath := field.NewPath("spec")
 

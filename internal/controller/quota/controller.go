@@ -322,7 +322,7 @@ func effectAsString(data corev1.ResourceList) string {
 	keys := sets.List(sets.KeySet(data))
 	for _, resource := range keys {
 		quantity := data[resource]
-		sb.WriteString(fmt.Sprintf("%s: %s, ", resource.String(), quantity.String()))
+		fmt.Fprintf(&sb, "%s: %s, ", resource.String(), quantity.String())
 	}
 	res := sb.String()
 	if len(res) > 0 {
@@ -358,8 +358,8 @@ func (r *QuotaController) evaluateEffectiveness(ctx context.Context, namespace *
 			}
 			errs = errors.Join(errs, ctrlutils.EnsureAnnotation(ctx, r.OnboardingCluster, &qi, quotav1alpha1.EffectAnnotation, effectString, true, ctrlutils.OVERWRITE))
 			errs = errors.Join(errs, ctrlutils.EnsureLabel(ctx, r.OnboardingCluster, &qi, quotav1alpha1.QuotaIncreaseOperationModeLabel, string(qdef.Mode), true, ctrlutils.OVERWRITE))
-		} else if !(qdef.Mode == quotav1alpha1.SINGULAR && qi.Name == singularQIName) {
-			// delete QuotaIncrease
+		} else if qdef.Mode != quotav1alpha1.SINGULAR || qi.Name != singularQIName {
+			// delete QuotaIncrease, if it is not the selected 'singular' one
 			log.Info("Deleting ineffective QuotaIncrease", "quotaIncrease", client.ObjectKeyFromObject(&qi).String())
 			errs = errors.Join(errs, r.OnboardingCluster.Delete(ctx, &qi))
 		}
