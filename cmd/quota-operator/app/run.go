@@ -267,8 +267,8 @@ func (o *RunOptions) Run(ctx context.Context) error {
 		TLSOpts: o.WebhookTLSOpts,
 	})
 
-	mgr, err := ctrl.NewManager(o.PlatformCluster.RESTConfig(), ctrl.Options{
-		Scheme:                 o.PlatformCluster.Scheme(),
+	mgr, err := ctrl.NewManager(onboardingCluster.RESTConfig(), ctrl.Options{
+		Scheme:                 onboardingCluster.Scheme(),
 		Metrics:                o.MetricsServerOptions,
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: o.ProbeAddr,
