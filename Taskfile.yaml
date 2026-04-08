@@ -14,4 +14,25 @@ includes:
       CRDS_COMPONENTS: "quota-operator"
       CRDS_PATH: '{{.ROOT_DIR}}/api/crds/manifests'
       REPO_URL: 'https://github.com/openmcp-project/quota-operator'
-      
+
+tasks:
+  platformservice:
+    desc: "  Generates a PlatformService manifest for the current version. Set the VERBOSITY env var to overwrite the default verbosity level (INFO)."
+    requires:
+      vars:
+      - VERSION
+    vars:
+      VERBOSITY:
+        sh: echo "${VERBOSITY:-INFO}"
+    cmds:
+    - cmd: |
+        cat << EOF
+        apiVersion: openmcp.cloud/v1alpha1
+        kind: PlatformService
+        metadata:
+          name: quota
+        spec:
+          image: ghcr.io/openmcp-project/images/quota-operator:{{.VERSION}}
+          verbosity: {{.VERBOSITY}}
+        EOF
+      silent: true
