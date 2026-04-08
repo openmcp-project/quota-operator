@@ -18,7 +18,7 @@ import (
 
 	"github.com/openmcp-project/quota-operator/api/crds"
 	providerscheme "github.com/openmcp-project/quota-operator/api/install"
-	"github.com/openmcp-project/quota-operator/pkg/controller/quota"
+	"github.com/openmcp-project/quota-operator/internal/controller/quota"
 )
 
 func NewInitCommand(so *SharedOptions) *cobra.Command {

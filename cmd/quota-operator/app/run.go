@@ -28,7 +28,7 @@ import (
 
 	providerscheme "github.com/openmcp-project/quota-operator/api/install"
 	quotav1alpha1 "github.com/openmcp-project/quota-operator/api/v1alpha1"
-	"github.com/openmcp-project/quota-operator/pkg/controller/quota"
+	"github.com/openmcp-project/quota-operator/internal/controller/quota"
 )
 
 var setupLog logging.Logger

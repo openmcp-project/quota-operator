@@ -8,7 +8,7 @@ includes:
       NESTED_MODULES: api
       API_DIRS: '{{.ROOT_DIR}}/api/v1alpha1/...'
       MANIFEST_OUT: '{{.ROOT_DIR}}/api/crds/manifests'
-      CODE_DIRS: '{{.ROOT_DIR}}/cmd/... {{.ROOT_DIR}}/api/... {{.ROOT_DIR}}/pkg/...'
+      CODE_DIRS: '{{.ROOT_DIR}}/cmd/... {{.ROOT_DIR}}/api/... {{.ROOT_DIR}}/internal/...'
       COMPONENTS: 'quota-operator'
       CHART_COMPONENTS: "[]"
       CRDS_COMPONENTS: "quota-operator"

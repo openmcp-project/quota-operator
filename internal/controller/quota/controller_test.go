@@ -21,7 +21,7 @@ import (
 
 	quotainstall "github.com/openmcp-project/quota-operator/api/install"
 	quotav1alpha1 "github.com/openmcp-project/quota-operator/api/v1alpha1"
-	quotacontroller "github.com/openmcp-project/quota-operator/pkg/controller/quota"
+	quotacontroller "github.com/openmcp-project/quota-operator/internal/controller/quota"
 )
 
 const (
