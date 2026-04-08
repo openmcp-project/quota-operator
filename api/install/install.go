@@ -6,6 +6,8 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
+	clustersv1alpha1 "github.com/openmcp-project/openmcp-operator/api/clusters/v1alpha1"
+
 	"github.com/openmcp-project/quota-operator/api/v1alpha1"
 )
 
@@ -20,6 +22,7 @@ func InstallCRDAPIs(scheme *runtime.Scheme) *runtime.Scheme {
 
 func InstallOperatorAPIsPlatform(scheme *runtime.Scheme) *runtime.Scheme {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(clustersv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(v1alpha1.AddToScheme(scheme)) // required for config resource
 
 	return scheme
