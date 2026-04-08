@@ -10,5 +10,8 @@ includes:
       MANIFEST_OUT: '{{.ROOT_DIR}}/api/crds/manifests'
       CODE_DIRS: '{{.ROOT_DIR}}/cmd/... {{.ROOT_DIR}}/api/... {{.ROOT_DIR}}/pkg/...'
       COMPONENTS: 'quota-operator'
+      CHART_COMPONENTS: "[]"
+      CRDS_COMPONENTS: "quota-operator"
+      CRDS_PATH: '{{.ROOT_DIR}}/api/crds/manifests'
       REPO_URL: 'https://github.com/openmcp-project/quota-operator'
       
