@@ -7,7 +7,7 @@ metadata:
     app: openmcp-onboarding
     role: quota-operator
     chart-name: "{{ .Chart.Name }}"
-    chart-version: "{{ .Chart.Version }}"
+    chart-version: "{{ .Chart.Version | replace "+" "_" }}"
     release: "{{ .Release.Name }}"
     heritage: "{{ .Release.Service }}"
 spec:
