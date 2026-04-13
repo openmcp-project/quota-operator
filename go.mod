@@ -8,7 +8,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.39.1
 	github.com/openmcp-project/controller-utils v0.27.0
-	github.com/openmcp-project/quota-operator/api v0.16.0
+	github.com/openmcp-project/quota-operator/api v0.18.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	k8s.io/api v0.35.3
