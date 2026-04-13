@@ -3,44 +3,45 @@
 ## Example
 
 ```yaml
-quotas:
-- name: "singular-quota"
-  selector: # optional
-    matchLabels:
-      demo.quota.operator/id: singular
-  mode: singular
-  deleteIneffectiveQuotas: true # optional
-  template:
-    annotations: # optional
-      foo.bar.baz/foobar: asdf
-    spec:
-      hard:
-        count/secrets: 3
-- name: "maximum-quota"
-  selector:
-    matchLabels:
-      demo.quota.operator/id: maximum
-  mode: maximum
-  deleteIneffectiveQuotas: false # optional
-  template:
-    spec:
-      hard:
-        count/configmaps: 3
-- name: "cumulative-quota"
-  selector:
-    matchLabels:
-      demo.quota.operator/id: cumulative
-  mode: cumulative
-  template:
-    labels: # optional
-      foo.bar.baz/foobar: asdf
-    spec:
-      hard:
-        count/serviceaccounts: 3
-
-externalQuotaDefinitionNames: # optional
-- other-quota-1
-- other-quota-2
+apiVersion: openmcp.cloud/v1alpha1
+kind: QuotaServiceConfig
+metadata:
+  name: quota # same name as PlatformService resource
+spec:
+  quotas:
+  - name: "singular-quota"
+    selector: # optional
+      matchLabels:
+        demo.quota.operator/id: singular
+    mode: singular
+    deleteIneffectiveQuotas: true # optional
+    template:
+      annotations: # optional
+        foo.bar.baz/foobar: asdf
+      spec:
+        hard:
+          count/secrets: 3
+  - name: "maximum-quota"
+    selector:
+      matchLabels:
+        demo.quota.operator/id: maximum
+    mode: maximum
+    deleteIneffectiveQuotas: false # optional
+    template:
+      spec:
+        hard:
+          count/configmaps: 3
+  - name: "cumulative-quota"
+    selector:
+      matchLabels:
+        demo.quota.operator/id: cumulative
+    mode: cumulative
+    template:
+      labels: # optional
+        foo.bar.baz/foobar: asdf
+      spec:
+        hard:
+          count/serviceaccounts: 3
 ```
 
 ## Quota Definitions
@@ -61,9 +62,12 @@ The name of the quota definition serves as an identifier. It must be unique amon
 
 The quota operator reconciles namespaces and the label selectors allow to filter which quota definition should apply to which namespaces.
 
-Note that only one quota definition can be used per namespace, so the sets of namespaces selected by the different label selectors should be disjunct. In case of overlaps, the first quota definition to be applied to this namespace 'claims' it, preventing other quota definitions to be applied to it.
+Note that only one quota definition can be used per namespace, so the sets of namespaces selected by the different label selectors should be disjunct. In case of overlaps, only the first quota definition with a matching selector takes effect.
 
 While it is possible to not specify any label selector, this will result in the quota definition being applied to all namespaces, including k8s-relevant ones (e.g. `kube-system`), which is likely not desired.
+
+> [!IMPORTANT]
+> Having label selectors which result in disjunct sets of namespaces is especially important when running multiple instances of the platform service within the same environment. In case of overlaps, multiple `ResourceQuota` resources would be created, likely leading to unexpected resource quotas. If the conflicting quota definitions have the same name in the conflicting operators' configs, the controllers will fight about control over the created resources, leading to undefined (and most likely, undesired) behavior.
 
 ### ResourceQuota Template
 
