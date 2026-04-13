@@ -290,9 +290,12 @@ func (o *RunOptions) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("unable to create manager: %w", err)
 	}
+	if err := mgr.Add(o.PlatformCluster.Cluster()); err != nil {
+		return fmt.Errorf("unable to add platform cluster to manager: %w", err)
+	}
 
 	// setup Quota reconciler
-	if err := quota.NewQuotaController(o.PlatformCluster.Client(), onboardingCluster.Client(), o.ProviderName).SetupWithManager(mgr); err != nil {
+	if err := quota.NewQuotaController(o.PlatformCluster, onboardingCluster, o.ProviderName).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to add Quota reconciler to manager: %w", err)
 	}
 

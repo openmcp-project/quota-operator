@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	"github.com/openmcp-project/controller-utils/pkg/clusters"
 	openmcpctrlutil "github.com/openmcp-project/controller-utils/pkg/controller"
 	testutils "github.com/openmcp-project/controller-utils/pkg/testing"
 
@@ -71,7 +72,7 @@ func defaultTestSetup(mode quotav1alpha1.QuotaIncreaseOperatingMode, deleteIneff
 		WithFakeClient(platformCluster, quotainstall.InstallOperatorAPIsPlatform(runtime.NewScheme())).
 		WithFakeClient(onboardingCluster, quotainstall.InstallOperatorAPIsOnboarding(runtime.NewScheme())).
 		WithReconcilerConstructor(rec, func(c ...client.Client) reconcile.Reconciler {
-			return quotacontroller.NewQuotaController(c[0], c[1], providerName)
+			return quotacontroller.NewQuotaController(clusters.NewTestClusterFromClient(platformCluster, c[0]), clusters.NewTestClusterFromClient(onboardingCluster, c[1]), providerName)
 		}, platformCluster, onboardingCluster).
 		Build()
 
