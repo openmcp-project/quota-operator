@@ -18,7 +18,6 @@ import (
 
 	"github.com/openmcp-project/quota-operator/api/crds"
 	providerscheme "github.com/openmcp-project/quota-operator/api/install"
-	"github.com/openmcp-project/quota-operator/internal/controller/quota"
 )
 
 func NewInitCommand(so *SharedOptions) *cobra.Command {
@@ -28,19 +27,20 @@ func NewInitCommand(so *SharedOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize Platform Service Quota",
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.PrintRawOptions(cmd)
 			if err := opts.Complete(cmd.Context()); err != nil {
-				panic(fmt.Errorf("error completing options: %w", err))
+				return fmt.Errorf("error completing options: %w", err)
 			}
 			opts.PrintCompletedOptions(cmd)
 			if opts.DryRun {
 				cmd.Println("=== END OF DRY RUN ===")
-				return
+				return nil
 			}
 			if err := opts.Run(cmd.Context()); err != nil {
-				panic(err)
+				return err
 			}
+			return nil
 		},
 	}
 	opts.AddFlags(cmd)
@@ -84,7 +84,7 @@ func (o *InitOptions) Run(ctx context.Context) error {
 		return fmt.Errorf("environment variable %s is not set", openmcpconst.EnvVariablePodNamespace)
 	}
 
-	clusterAccessManager := clusteraccess.NewClusterAccessManager(o.PlatformCluster.Client(), quota.ControllerName, providerSystemNamespace)
+	clusterAccessManager := clusteraccess.NewClusterAccessManager(o.PlatformCluster.Client(), o.ProviderName, providerSystemNamespace)
 	clusterAccessManager.WithLogger(&log).
 		WithInterval(10 * time.Second).
 		WithTimeout(30 * time.Minute)

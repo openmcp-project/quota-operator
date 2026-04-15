@@ -132,7 +132,7 @@ func (r *QuotaController) Reconcile(ctx context.Context, req reconcile.Request) 
 
 	// evaluate quota-managed-by label on namespace
 	quotaManagedBy, ok := ctrlutils.GetLabel(ns, quotav1alpha1.ManagedByLabel)
-	if ok && quotaManagedBy != ControllerName {
+	if ok && quotaManagedBy != r.ProviderName {
 		log.Info("Namespace is managed by another instance of this platform service, skipping reconciliation", "providerName", quotaManagedBy)
 		return ctrl.Result{}, nil
 	}
@@ -265,7 +265,7 @@ func (r *QuotaController) computeResourceQuota(ctx context.Context, namespace *c
 	if rq.Labels == nil {
 		rq.Labels = map[string]string{}
 	}
-	rq.Labels[quotav1alpha1.ManagedByLabel] = ControllerName
+	rq.Labels[quotav1alpha1.ManagedByLabel] = r.ProviderName
 	rq.Labels[quotav1alpha1.QuotaDefinitionLabel] = qdef.Name
 
 	effects := map[string]corev1.ResourceList{}
