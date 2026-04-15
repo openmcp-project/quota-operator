@@ -237,7 +237,7 @@ func (o *RunOptions) Run(ctx context.Context) error {
 		WithInterval(10 * time.Second).
 		WithTimeout(30 * time.Minute)
 
-	onboadingClusterPermissions := []clustersv1alpha1.PermissionsRequest{
+	onboardingClusterPermissions := []clustersv1alpha1.PermissionsRequest{
 		{
 			Rules: []rbacv1.PolicyRule{
 				{
@@ -258,7 +258,7 @@ func (o *RunOptions) Run(ctx context.Context) error {
 			},
 		},
 	}
-	onboardingCluster, err := clusterAccessManager.CreateAndWaitForCluster(ctx, clustersv1alpha1.PURPOSE_ONBOARDING, clustersv1alpha1.PURPOSE_ONBOARDING, onboardingScheme, onboadingClusterPermissions)
+	onboardingCluster, err := clusterAccessManager.CreateAndWaitForCluster(ctx, clustersv1alpha1.PURPOSE_ONBOARDING, clustersv1alpha1.PURPOSE_ONBOARDING, onboardingScheme, onboardingClusterPermissions)
 	if err != nil {
 		return fmt.Errorf("error creating/updating onboarding cluster: %w", err)
 	}
