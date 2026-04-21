@@ -1,4 +1,4 @@
-module github.com/openmcp-project/quota-operator/api
+module github.com/openmcp-project/platform-service-quota/api
 
 go 1.26.2
 

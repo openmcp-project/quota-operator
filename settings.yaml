@@ -1,4 +1,4 @@
-COMPONENT_NAME: quota-operator
+COMPONENT_NAME: platform-service-quota
 COMPONENT_NAME_PREFIX: github.com/openmcp-project
 PROVIDER: openmcp-project
-COMPONENT_REPO_PREFIX: ghcr.io/openmcp-project/quota-operator
+COMPONENT_REPO_PREFIX: ghcr.io/openmcp-project/platform-service-quota

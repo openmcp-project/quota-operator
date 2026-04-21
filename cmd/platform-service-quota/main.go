@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/openmcp-project/quota-operator/cmd/quota-operator/app"
+	"github.com/openmcp-project/platform-service-quota/cmd/platform-service-quota/app"
 )
 
 func main() {

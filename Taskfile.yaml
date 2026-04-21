@@ -9,11 +9,11 @@ includes:
       API_DIRS: '{{.ROOT_DIR}}/api/v1alpha1/...'
       MANIFEST_OUT: '{{.ROOT_DIR}}/api/crds/manifests'
       CODE_DIRS: '{{.ROOT_DIR}}/cmd/... {{.ROOT_DIR}}/api/... {{.ROOT_DIR}}/internal/...'
-      COMPONENTS: 'quota-operator'
+      COMPONENTS: 'platform-service-quota'
       CHART_COMPONENTS: "[]"
-      CRDS_COMPONENTS: "quota-operator"
+      CRDS_COMPONENTS: "platform-service-quota"
       CRDS_PATH: '{{.ROOT_DIR}}/api/crds/manifests'
-      REPO_URL: 'https://github.com/openmcp-project/quota-operator'
+      REPO_URL: 'https://github.com/openmcp-project/platform-service-quota'
       GENERATE_DOCS_INDEX: 'true'
 
 tasks:
@@ -33,7 +33,7 @@ tasks:
         metadata:
           name: quota
         spec:
-          image: ghcr.io/openmcp-project/images/quota-operator:{{.VERSION}}
+          image: ghcr.io/openmcp-project/images/platform-service-quota:{{.VERSION}}
           verbosity: {{.VERBOSITY}}
         EOF
       silent: true

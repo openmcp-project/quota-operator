@@ -52,7 +52,7 @@
     },
     {
       "description": "Ignore our own image in chart as it will be updated on release",
-      "matchPackageNames": ["ghcr.io/openmcp-project/images/quota-operator"],
+      "matchPackageNames": ["ghcr.io/openmcp-project/images/platform-service-quota"],
       "matchManagers": ["helm-values"],
       "enabled": false
     }
