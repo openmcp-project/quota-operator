@@ -14,11 +14,11 @@ type QuotaIncreaseSpec struct {
 
 // QuotaIncrease is the Schema for the QuotaIncrease API
 // +kubebuilder:object:root=true
-// +kubebuilder:resource:scope=Namespaced
-// +kubebuilder:resource:shortName=qi
+// +kubebuilder:resource:scope=Namespaced,shortName=qi
 // +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.metadata.labels['quota\.openmcp\.cloud\/mode']`
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:printcolumn:name="Effect",type=string,JSONPath=`.metadata.annotations['quota\.openmcp\.cloud\/effect']`,priority=1
+// +kubebuilder:metadata:labels="openmcp.cloud/cluster=onboarding"
 type QuotaIncrease struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

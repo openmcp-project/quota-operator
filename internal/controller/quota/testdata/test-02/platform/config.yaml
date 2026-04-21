@@ -1,0 +1,11 @@
+apiVersion: openmcp.cloud/v1alpha1
+kind: QuotaServiceConfig
+metadata:
+  name: quota
+spec:
+  quotas:
+  - name: "all"
+    template:
+      spec:
+        hard:
+          count/secrets: 3

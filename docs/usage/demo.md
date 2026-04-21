@@ -6,9 +6,9 @@ This document aims to provide a short demo flow that can be used to get familiar
 
 ### Prerequisites
 
-This demo requires access to a kubernetes cluster. It expects the `KUBECONFIG` environment variable to point to the kubeconfig for this cluster.
+This demo assumes the platform service quota to be running within an openmcp v2 environment (either local or remote). The name of the `PlatformService` resource is assumed `quota`, if that is not the case, the name of the `QuotaServiceConfig` resource needs to be adapted in the code snippets below.
 
-It will be helpful to have two terminal tabs with the `KUBECONFIG` environment variable configured - one for running the controller in and one for applying resources into the cluster while it is running.
+Access to both, the onboarding and the platform cluster, is required. The code snippets below indicate whether they are meant to be executed against the onboarding or the platform cluster.
 
 ### Create Namespaces
 
@@ -20,6 +20,7 @@ For this demo, we will work with three namespaces. They are used to demonstrate 
 
 Create the namespaces:
 ```shell
+# onboarding cluster
 cat << EOF | kubectl apply -f -
 apiVersion: v1
 kind: Namespace
@@ -50,49 +51,47 @@ EOF
 For this demo, we will configure the quota operator with three different quota definitions. Which will be applied depends on the value of the `demo.quota.operator/id` label.
 
 ```shell
-quota_operator_config=$(mktemp)
-cat << EOF > ${quota_operator_config}
-quotas:
-- name: "singular-quota"
-  selector:
-    matchLabels:
-      demo.quota.operator/id: singular
-  mode: singular
-  template:
-    spec:
-      hard:
-        count/secrets: 3
-- name: "maximum-quota"
-  selector:
-    matchLabels:
-      demo.quota.operator/id: maximum
-  mode: maximum
-  template:
-    spec:
-      hard:
-        count/configmaps: 3
-- name: "cumulative-quota"
-  selector:
-    matchLabels:
-      demo.quota.operator/id: cumulative
-  mode: cumulative
-  template:
-    spec:
-      hard:
-        count/serviceaccounts: 3
+# platform cluster
+cat << EOF | kubectl apply -f -
+apiVersion: openmcp.cloud/v1alpha1
+kind: QuotaServiceConfig
+metadata:
+  name: quota
+spec:
+  quotas:
+  - name: "singular-quota"
+    selector:
+      matchLabels:
+        demo.quota.operator/id: singular
+    mode: singular
+    template:
+      spec:
+        hard:
+          count/secrets: 3
+  - name: "maximum-quota"
+    selector:
+      matchLabels:
+        demo.quota.operator/id: maximum
+    mode: maximum
+    template:
+      spec:
+        hard:
+          count/configmaps: 3
+  - name: "cumulative-quota"
+    selector:
+      matchLabels:
+        demo.quota.operator/id: cumulative
+    mode: cumulative
+    template:
+      spec:
+        hard:
+          count/serviceaccounts: 3
 EOF
 ```
 
-This config instructs the operator to run three instances of the quota controller. The first one reacts only to namespaces with the `demo.quota.operator/id: singular` label and by default grants a quota for three secrets. Instance two and three behave the same for the `maximum` and `cumulative` label value and configmap and serviceaccount quotas, respectively.
+This config instructs the operator to distinguish between three different scenarios, based on labels on the namespaces. The first one covers only namespaces with the `demo.quota.operator/id: singular` label and by default grants a quota for three secrets. Scenarios two and three behave the same for the `maximum` and `cumulative` label value and configmap and serviceaccount quotas, respectively.
 
 You might also notice that each instance is configured with a different value for `mode`. This value controls how the operator handles multiple competing `QuotaIncrease` resources in the same namespace. We will get to this later.
-
-### Run QuotaOperator
-
-Now run the quota operator:
-```shell
-go run ./cmd/quota-operator/main.go --kubeconfig ${KUBECONFIG} --config ${quota_operator_config} --cli # the --cli argument configures the logger for terminal-optimized output
-```
 
 ### Check for ResourceQuotas
 
@@ -100,6 +99,7 @@ By now, the quota operator should have created a `ResourceQuota` in all of our t
 
 Fetch the `ResourceQuota` resources:
 ```shell
+# onboarding cluster
 kubectl get quota -A
 ```
 
@@ -123,6 +123,7 @@ For each of the three namespaces, let's create three `QuotaIncrease`s:
 #### Mode: singular
 
 ```shell
+# onboarding cluster
 cat << EOF | kubectl apply -f -
 apiVersion: openmcp.cloud/v1alpha1
 kind: QuotaIncrease
@@ -164,6 +165,7 @@ singular-quota   4h    count/secrets: 0/3
 
 The reason is simple: In `singular` mode, only one specific `QuotaIncrease` is taken into account and that one has to be referenced via a label on the containing namespace. Let's add the corresponding label, pointing to the `medium` `QuotaIncrease`:
 ```shell
+# onboarding cluster
 kubectl label namespace singular quota.openmcp.cloud/use=medium
 ```
 
@@ -187,6 +189,7 @@ small    singular   167m
 #### Mode: maximum
 
 ```shell
+# onboarding cluster
 cat << EOF | kubectl apply -f -
 apiVersion: openmcp.cloud/v1alpha1
 kind: QuotaIncrease
@@ -241,6 +244,7 @@ The `maximum` mode takes only the highest quantity for each resource into accoun
 #### Mode: cumulative
 
 ```shell
+# onboarding cluster
 cat << EOF | kubectl apply -f -
 apiVersion: openmcp.cloud/v1alpha1
 kind: QuotaIncrease
@@ -295,44 +299,50 @@ small    cumulative   66s   count/serviceaccounts: 10
 
 In `maximum` mode, there might be `QuotaIncrease`s which don't have any effect, because all quotas they provide are overshadowed by other `QuotaIncrease`s providing higher quotas for the same resources. The situation is even worse for `singular` mode, where only one `QuotaIncrease` is taken into account at all.
 
-The quota operator can be instructed to automatically delete `QuotaIncrease` resources that don't have an effect on the generated `ResourceQuota`. Let's turn this feature on for all three of our quota definitions. For this, we have to stop the quota operator and update the config:
+The quota operator can be instructed to automatically delete `QuotaIncrease` resources that don't have an effect on the generated `ResourceQuota`. This is done by updating the configuration resource:
 ```shell
-cat << EOF > ${quota_operator_config}
-quotas:
-- name: "singular-quota"
-  selector:
-    matchLabels:
-      demo.quota.operator/id: singular
-  mode: singular
-  deleteIneffectiveQuotas: true # <<<<<<<<<<<<<<<<<<<<
-  template:
-    spec:
-      hard:
-        count/secrets: 3
-- name: "maximum-quota"
-  selector:
-    matchLabels:
-      demo.quota.operator/id: maximum
-  mode: maximum
-  deleteIneffectiveQuotas: true # <<<<<<<<<<<<<<<<<<<<
-  template:
-    spec:
-      hard:
-        count/configmaps: 3
-- name: "cumulative-quota"
-  selector:
-    matchLabels:
-      demo.quota.operator/id: cumulative
-  mode: cumulative
-  deleteIneffectiveQuotas: true # <<<<<<<<<<<<<<<<<<<<
-  template:
-    spec:
-      hard:
-        count/serviceaccounts: 3
+# platform cluster
+cat << EOF | kubectl apply -f -
+apiVersion: openmcp.cloud/v1alpha1
+kind: QuotaServiceConfig
+metadata:
+  name: quota
+spec:
+  quotas:
+  - name: "singular-quota"
+    selector:
+      matchLabels:
+        demo.quota.operator/id: singular
+    mode: singular
+    deleteIneffectiveQuotas: true # <<<<<<<<<<<<<<<<<<<<
+    template:
+      spec:
+        hard:
+          count/secrets: 3
+  - name: "maximum-quota"
+    selector:
+      matchLabels:
+        demo.quota.operator/id: maximum
+    mode: maximum
+    deleteIneffectiveQuotas: true # <<<<<<<<<<<<<<<<<<<<
+    template:
+      spec:
+        hard:
+          count/configmaps: 3
+  - name: "cumulative-quota"
+    selector:
+      matchLabels:
+        demo.quota.operator/id: cumulative
+    mode: cumulative
+    deleteIneffectiveQuotas: true # <<<<<<<<<<<<<<<<<<<<
+    template:
+      spec:
+        hard:
+          count/serviceaccounts: 3
 EOF
 ```
 
-Now, let's start the quota operator again. We will immediately see some log messages with `Deleting ineffective QuotaIncrease`.
+The operator should immediately pick up the changed configuration and display some messages showing `Deleting ineffective QuotaIncrease`.
 A look at the `QuotaIncrease`s quickly shows the effect of this configuration:
 ```
 kubectl get qi -A -o wide

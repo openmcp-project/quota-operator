@@ -1,10 +1,8 @@
 package v1alpha1
 
-import "fmt"
-
-var (
+const (
 	// LabelPrefix is the common label prefix for all labels used by the Quota Controller.
-	LabelPrefix = fmt.Sprintf("quota.%s", GroupVersion.Group)
+	LabelPrefix = "quota." + GroupName
 
 	// SingularQuotaIncreaseLabel is the label used to specify which QuotaIncrease to use in singular mode.
 	// It is attached to the containing namespace.
@@ -24,6 +22,9 @@ var (
 
 	// QuotaDefinitionLabel is used to mark the ResourceQuotas with the QuotaDefinition they are based on.
 	QuotaDefinitionLabel = LabelPrefix + "/quota-definition"
+
+	// QuotaOperationLabel is a more specific version of the OperationLabel (openmcp.cloud/operation).
+	QuotaOperationLabel = LabelPrefix + "/operation"
 )
 
 const (
