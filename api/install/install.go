@@ -8,7 +8,7 @@ import (
 
 	clustersv1alpha1 "github.com/openmcp-project/openmcp-operator/api/clusters/v1alpha1"
 
-	"github.com/openmcp-project/quota-operator/api/v1alpha1"
+	"github.com/openmcp-project/platform-service-quota/api/v1alpha1"
 )
 
 // InstallCRDAPIs installs the CRD APIs in the scheme.

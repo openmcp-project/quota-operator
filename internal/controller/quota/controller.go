@@ -28,7 +28,7 @@ import (
 	"github.com/openmcp-project/controller-utils/pkg/logging"
 	openapiconst "github.com/openmcp-project/openmcp-operator/api/constants"
 
-	quotav1alpha1 "github.com/openmcp-project/quota-operator/api/v1alpha1"
+	quotav1alpha1 "github.com/openmcp-project/platform-service-quota/api/v1alpha1"
 )
 
 const ControllerName = "quota"

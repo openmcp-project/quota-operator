@@ -16,8 +16,8 @@ import (
 	openmcpconst "github.com/openmcp-project/openmcp-operator/api/constants"
 	"github.com/openmcp-project/openmcp-operator/lib/clusteraccess"
 
-	"github.com/openmcp-project/quota-operator/api/crds"
-	providerscheme "github.com/openmcp-project/quota-operator/api/install"
+	"github.com/openmcp-project/platform-service-quota/api/crds"
+	providerscheme "github.com/openmcp-project/platform-service-quota/api/install"
 )
 
 func NewInitCommand(so *SharedOptions) *cobra.Command {
