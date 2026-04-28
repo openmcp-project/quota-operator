@@ -6,7 +6,7 @@ replace github.com/openmcp-project/platform-service-quota/api => ./api
 
 require (
 	github.com/onsi/ginkgo/v2 v2.28.1
-	github.com/onsi/gomega v1.39.1
+	github.com/onsi/gomega v1.40.0
 	github.com/openmcp-project/controller-utils v0.27.0
 	github.com/openmcp-project/openmcp-operator/lib v0.17.1
 	github.com/openmcp-project/platform-service-quota/api v1.0.0
