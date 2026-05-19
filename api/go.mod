@@ -1,6 +1,6 @@
 module github.com/openmcp-project/platform-service-quota/api
 
-go 1.26.2
+go 1.26.3
 
 require (
 	k8s.io/api v0.35.3
