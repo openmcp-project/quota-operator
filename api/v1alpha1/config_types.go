@@ -93,7 +93,7 @@ func (d *QuotaDefinition) BaseResourceQuota() *corev1.ResourceQuota {
 }
 
 func init() {
-	SchemeBuilder.Register(&QuotaServiceConfig{}, &QuotaServiceConfigList{})
+	RegisterToSchemeBuilder(&QuotaServiceConfig{}, &QuotaServiceConfigList{})
 }
 
 // Validate validates the QuotaController configuration.
