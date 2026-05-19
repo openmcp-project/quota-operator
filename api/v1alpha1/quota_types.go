@@ -35,5 +35,5 @@ type QuotaIncreaseList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&QuotaIncrease{}, &QuotaIncreaseList{})
+	RegisterToSchemeBuilder(&QuotaIncrease{}, &QuotaIncreaseList{})
 }
